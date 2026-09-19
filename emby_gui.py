@@ -61,6 +61,30 @@ def media_directory(path: str) -> str:
     return posixpath.dirname(value.rstrip("/"))
 
 
+def complete_directory_path(directory: str, prefix: str) -> str:
+    """Convert an Emby-side directory into a locally openable path.
+
+    Existing UNC paths are preserved. When a prefix is configured, POSIX
+    roots and Windows drive roots are treated as the remote share-relative
+    portion and appended to that prefix.
+    """
+    value = str(directory or "").strip()
+    if not value:
+        return ""
+    if value.startswith("\\\\"):
+        return value
+
+    root = str(prefix or "").strip()
+    if not root:
+        return value
+
+    normalized = value.replace("/", "\\")
+    drive, tail = ntpath.splitdrive(normalized)
+    if drive:
+        normalized = tail
+    return root.rstrip("\\/") + "\\" + normalized.lstrip("\\/")
+
+
 def default_settings() -> dict[str, Any]:
     return {
         "connection": {
@@ -68,6 +92,9 @@ def default_settings() -> dict[str, Any]:
             "api_key": "",
             "verify_ssl": True,
             "timeout": 60,
+        },
+        "paths": {
+            "directory_prefix": "",
         },
         "libraries": {
             "delete_actor_images": "",
@@ -96,7 +123,7 @@ def load_settings() -> dict[str, Any]:
         return cfg
 
     if isinstance(loaded, dict):
-        for section in ("connection", "libraries", "scopes", "scan_missing_actors"):
+        for section in ("connection", "paths", "libraries", "scopes", "scan_missing_actors"):
             value = loaded.get(section)
             if isinstance(value, dict):
                 cfg[section].update(value)

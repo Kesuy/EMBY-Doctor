@@ -37,6 +37,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
 
         libs = self.settings["libraries"]
         scopes = self.settings["scopes"]
+        paths = self.settings["paths"]
         self.actor_lib_var = tk.StringVar(value=str(libs.get("delete_actor_images") or ""))
         self.missing_lib_var = tk.StringVar(value=str(libs.get("scan_missing_actors") or ""))
         self.director_lib_var = tk.StringVar(value=str(libs.get("delete_directors") or ""))
@@ -46,6 +47,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         self.include_video_var = tk.BooleanVar(
             value=bool(self.settings["scan_missing_actors"].get("include_video", False))
         )
+        self.directory_prefix_var = tk.StringVar(value=str(paths.get("directory_prefix") or ""))
         self.status_var = tk.StringVar(value=f"设置文件：{settings_path()}")
 
         self.build_ui()
@@ -85,8 +87,17 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         ttk.Label(conn, text="超时(秒)").grid(row=1, column=2, sticky="e", padx=(12, 6), pady=4)
         ttk.Entry(conn, textvariable=self.timeout_var, width=8).grid(row=1, column=3, sticky="w", pady=4)
 
+        ttk.Label(conn, text="打开目录路径前缀").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=4)
+        ttk.Entry(conn, textvariable=self.directory_prefix_var).grid(
+            row=2, column=1, columnspan=3, sticky="ew", pady=4
+        )
+        ttk.Label(
+            conn,
+            text=r"可选，例如 \\192.168.1.10；打开结果目录时会补全为 \\192.168.1.10\结果路径",
+        ).grid(row=3, column=1, columnspan=3, sticky="w", pady=(0, 4))
+
         btns = ttk.Frame(conn)
-        btns.grid(row=2, column=0, columnspan=4, sticky="e", pady=(8, 0))
+        btns.grid(row=4, column=0, columnspan=4, sticky="e", pady=(8, 0))
         b_test = ttk.Button(btns, text="测试连接", command=self.test_connection)
         b_test.pack(side="left", padx=4)
         b_save = ttk.Button(btns, text="保存设置", command=self.save_all_settings)
@@ -180,6 +191,9 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
                 "api_key": self.api_key_var.get().strip(),
                 "verify_ssl": bool(self.verify_ssl_var.get()),
                 "timeout": timeout,
+            },
+            "paths": {
+                "directory_prefix": self.directory_prefix_var.get().strip(),
             },
             "libraries": {
                 "delete_actor_images": self.actor_lib_var.get().strip(),

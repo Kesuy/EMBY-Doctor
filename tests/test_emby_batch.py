@@ -19,6 +19,25 @@ class PureFunctionTests(unittest.TestCase):
         c = EmbyClient("http://localhost:8096/emby", "x")
         self.assertEqual(c.api_url("/Items"), "http://localhost:8096/emby/Items")
 
+    def test_refresh_metadata_uses_full_refresh_and_keeps_images(self):
+        calls = []
+
+        class RecordingClient(EmbyClient):
+            def _request(self, method, path, *, params=None, data=None):
+                calls.append((method, path, params, data))
+                return 204, b""
+
+        c = RecordingClient("http://localhost:8096", "x")
+        self.assertEqual(c.refresh_metadata("12/3"), 204)
+        method, path, params, data = calls[0]
+        self.assertEqual(method, "POST")
+        self.assertEqual(path, "/Items/12%2F3/Refresh")
+        self.assertEqual(params["MetadataRefreshMode"], "FullRefresh")
+        self.assertEqual(params["ImageRefreshMode"], "FullRefresh")
+        self.assertEqual(params["ReplaceAllMetadata"], "true")
+        self.assertEqual(params["ReplaceAllImages"], "false")
+        self.assertIsNone(data)
+
     def test_parse_library_ids(self):
         self.assertEqual(parse_library_ids(["1,2", "2", " 3 "]), ["1", "2", "3"])
 
@@ -63,6 +82,7 @@ class GuiConfigurationTests(unittest.TestCase):
         self.assertEqual(set(scopes), expected)
         self.assertTrue(all(scopes[key] == "selected" for key in expected))
         self.assertTrue(cfg["connection"]["verify_ssl"])
+        self.assertEqual(cfg["paths"]["directory_prefix"], "")
 
     def test_media_directory_supports_windows_and_posix_paths(self):
         from emby_gui import media_directory
@@ -76,6 +96,24 @@ class GuiConfigurationTests(unittest.TestCase):
             "/media/JAV/ABC-123",
         )
         self.assertEqual(media_directory(""), "")
+
+    def test_complete_directory_path_supports_network_prefix(self):
+        from emby_gui import complete_directory_path
+
+        prefix = r"\\192.168.123.111"
+        self.assertEqual(
+            complete_directory_path("/vol1/JAV/ABC-123", prefix),
+            r"\\192.168.123.111\vol1\JAV\ABC-123",
+        )
+        self.assertEqual(
+            complete_directory_path(r"D:\Media\JAV\ABC-123", r"\\server\media"),
+            r"\\server\media\Media\JAV\ABC-123",
+        )
+        self.assertEqual(
+            complete_directory_path(r"\\server\share\ABC-123", prefix),
+            r"\\server\share\ABC-123",
+        )
+        self.assertEqual(complete_directory_path("/vol1/JAV/ABC-123", ""), "/vol1/JAV/ABC-123")
 
     def test_gui_version_entry_does_not_require_tkinter_mainloop(self):
         from emby_gui import main
