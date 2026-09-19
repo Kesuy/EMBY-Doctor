@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import csv
 import json
+import ntpath
 import os
+import posixpath
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -29,8 +32,33 @@ def app_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def bundle_dir() -> Path:
+    """Directory containing bundled read-only application resources."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(getattr(sys, "_MEIPASS"))
+    return Path(__file__).resolve().parent
+
+
+def resource_path(relative: str) -> Path:
+    return bundle_dir() / relative
+
+
 def settings_path() -> Path:
     return app_dir() / SETTINGS_FILE
+
+
+def media_directory(path: str) -> str:
+    """Return the parent directory without the media filename.
+
+    Emby may run on Linux while this GUI runs on Windows, so handle both
+    POSIX and Windows path styles independent of the local OS.
+    """
+    value = str(path or "").strip()
+    if not value:
+        return ""
+    if "\\" in value or re.match(r"^[A-Za-z]:[\\/]", value):
+        return ntpath.dirname(value.rstrip("\\/"))
+    return posixpath.dirname(value.rstrip("/"))
 
 
 def default_settings() -> dict[str, Any]:
@@ -77,24 +105,76 @@ def save_settings(cfg: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
-def export_missing_csv(rows: list[dict[str, Any]]) -> Path:
+def _csv_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, (list, tuple, set)):
+        return " | ".join(str(x) for x in value)
+    return value
+
+
+def export_rows_csv(
+    filename_prefix: str,
+    columns: list[tuple[str, str]],
+    rows: list[dict[str, Any]],
+) -> Path:
     out_dir = app_dir() / "reports"
     out_dir.mkdir(parents=True, exist_ok=True)
-    output = out_dir / f"emby_movies_without_actors_{timestamp()}.csv"
+    output = out_dir / f"{filename_prefix}_{timestamp()}.csv"
     with output.open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
-        writer.writerow(["LibraryId", "ItemId", "Name", "Path", "ProviderIds"])
-        for movie in rows:
-            writer.writerow(
-                [
-                    movie.get("LibraryId", ""),
-                    movie.get("Id", ""),
-                    movie.get("Name", ""),
-                    movie.get("Path", ""),
-                    json.dumps(movie.get("ProviderIds") or {}, ensure_ascii=False),
-                ]
-            )
+        writer.writerow([title for title, _ in columns])
+        for row in rows:
+            writer.writerow([_csv_value(row.get(key, "")) for _, key in columns])
     return output
+
+
+def export_actor_csv(rows: list[dict[str, Any]]) -> Path:
+    return export_rows_csv(
+        "emby_actor_images",
+        [
+            ("演员", "Name"),
+            ("Person ID", "Id"),
+            ("影片所在目录", "Directory"),
+            ("状态", "Status"),
+        ],
+        rows,
+    )
+
+
+def export_missing_csv(rows: list[dict[str, Any]]) -> Path:
+    return export_rows_csv(
+        "emby_movies_without_actors",
+        [
+            ("媒体库 ID", "LibraryId"),
+            ("Item ID", "Id"),
+            ("影片", "Name"),
+            ("文件路径", "Path"),
+            ("影片所在目录", "Directory"),
+            ("ProviderIds", "ProviderIds"),
+        ],
+        rows,
+    )
+
+
+def export_director_csv(rows: list[dict[str, Any]]) -> Path:
+    prepared: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        item["DirectorsText"] = ", ".join(str(x) for x in (row.get("Directors") or []))
+        prepared.append(item)
+    return export_rows_csv(
+        "emby_directors",
+        [
+            ("影片", "Name"),
+            ("Item ID", "Id"),
+            ("导演", "DirectorsText"),
+            ("文件路径", "Path"),
+            ("影片所在目录", "Directory"),
+            ("状态", "Status"),
+        ],
+        prepared,
+    )
 
 
 def save_director_backup(items: list[dict[str, Any]]) -> Path:
