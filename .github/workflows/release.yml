@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - 'release/v*'
 
 permissions:
   contents: write
@@ -46,11 +48,20 @@ jobs:
           mkdir out
           cp release-assets/EmbyMediaLibraryBatchProcessor.exe out/EmbyMediaLibraryBatchProcessor-Windows.exe
           sha256sum out/* > out/SHA256SUMS.txt
+      - name: Resolve release tag
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "RELEASE_TAG=${GITHUB_REF_NAME}" >> "${GITHUB_ENV}"
+          else
+            echo "RELEASE_TAG=${GITHUB_REF_NAME#release/}" >> "${GITHUB_ENV}"
+          fi
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" out/* \
+          gh release create "${RELEASE_TAG}" out/* \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "Emby Media Library Batch Processor ${GITHUB_REF_NAME}" \
+            --target "${GITHUB_SHA}" \
+            --title "Emby Media Library Batch Processor ${RELEASE_TAG}" \
             --generate-notes
