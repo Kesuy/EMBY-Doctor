@@ -20,7 +20,7 @@
 - HTTP 超时
 - 测试连接
 
-三个子功能拥有各自独立的 **媒体库 ID** 设置，互不覆盖。每个功能都有独立的输出表格。
+三个子功能拥有各自独立的扫描范围，可分别选择 **全部媒体库** 或 **指定媒体库**；指定模式下各自保存媒体库 ID，互不覆盖。每个功能都有独立的输出表格。
 
 ## 设置保存位置
 
@@ -35,7 +35,7 @@ reports/
 
 - `settings.json`：Emby 通用连接信息、三个功能各自的媒体库 ID 等设置。
 - `backups/`：删除导演前生成的完整影片元数据 JSON 备份。
-- `reports/`：无演员影片扫描结果导出的 CSV。
+- `reports/`：三个功能导出的 CSV。输出结果保留完整文件路径，并额外提供不含文件名的“影片所在目录”。
 
 `settings.json` 中的 API Key 为明文保存，仅供本机使用，请勿上传、提交或分享该文件。
 
@@ -51,7 +51,7 @@ reports/
 
 扫描指定媒体库中的 Movie；可选同时扫描 Video。判定逻辑为影片 `People` 中不存在 `Type=Actor` 的人物。
 
-结果直接显示在 UI 表格中，并可导出 UTF-8 BOM CSV，方便 Excel 打开。
+结果直接显示在 UI 表格中，并可导出 UTF-8 BOM CSV，方便 Excel 打开。列表和 CSV 同时包含完整“文件路径”和不含文件名的“影片所在目录”。
 
 ### 3. 删除导演信息
 
@@ -93,7 +93,11 @@ Windows EXE 使用 PyInstaller：
 
 ```powershell
 python -m pip install pyinstaller
+# 先使用 ImageMagick 从 assets/emby.svg 生成标准多尺寸 Windows ICO：
+magick -background none assets/emby.svg -define icon:auto-resize=256,128,64,48,40,32,24,20,16 assets/emby.ico
 pyinstaller --clean --noconfirm --onefile --windowed `
+  --icon assets/emby.ico `
+  --add-data "assets/emby.png;assets" `
   --name EmbyMediaLibraryBatchProcessor `
   emby_gui.py
 ```

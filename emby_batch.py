@@ -27,7 +27,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Iterable
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 
 class EmbyError(RuntimeError):
@@ -101,7 +101,7 @@ class EmbyClient:
 
     def query_items(
         self,
-        library_id: str,
+        library_id: str | None,
         *,
         include_item_types: str = "Movie",
         fields: str = "People,Path,ProviderIds",
@@ -130,7 +130,9 @@ class EmbyClient:
             if not items or start >= total:
                 break
 
-    def query_actors_with_primary_image(self, library_id: str, page_size: int = 500) -> Iterable[dict[str, Any]]:
+    def query_actors_with_primary_image(
+        self, library_id: str | None, page_size: int = 500
+    ) -> Iterable[dict[str, Any]]:
         start = 0
         while True:
             data = self.get_json(
