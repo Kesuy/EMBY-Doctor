@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 import threading
 from typing import Any, Callable
@@ -7,7 +9,25 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from emby_batch import EmbyClient, EmbyError, __version__, parse_library_ids
-from emby_gui import APP_TITLE, load_settings, resource_path, save_settings, settings_path
+from emby_gui import (
+    APP_TITLE,
+    complete_directory_path,
+    load_settings,
+    resource_path,
+    save_settings,
+    settings_path,
+)
+
+
+def tree_sort_key(value: Any) -> tuple[int, Any]:
+    """Return a stable, user-friendly sort key for Treeview cell values."""
+    text = str(value or "").strip()
+    if not text:
+        return (2, "")
+    try:
+        return (0, int(text))
+    except ValueError:
+        return (1, text.casefold())
 from emby_gui_actor import ActorTabMixin
 from emby_gui_director import DirectorTabMixin
 from emby_gui_missing import MissingActorsTabMixin
@@ -156,9 +176,24 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         wrap.pack(fill="both", expand=True)
         names = [c[0] for c in columns]
         tree = ttk.Treeview(wrap, columns=names, show="headings", selectmode="extended")
+        heading_titles = {key: title for key, title, _width in columns}
+        tree._heading_titles = heading_titles  # type: ignore[attr-defined]
+        tree._sort_state = {}  # type: ignore[attr-defined]
         for key, title, width in columns:
-            tree.heading(key, text=title)
+            tree.heading(
+                key,
+                text=title,
+                command=lambda current_tree=tree, column=key: self.sort_tree(
+                    current_tree,
+                    column,
+                ),
+            )
             tree.column(key, width=width, minwidth=80, anchor="w")
+        tree.bind(
+            "<Double-1>",
+            lambda event, current_tree=tree: self.open_tree_directory(event, current_tree),
+            add="+",
+        )
         y = ttk.Scrollbar(wrap, orient="vertical", command=tree.yview)
         x = ttk.Scrollbar(wrap, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=y.set, xscrollcommand=x.set)
@@ -168,6 +203,83 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         wrap.rowconfigure(0, weight=1)
         wrap.columnconfigure(0, weight=1)
         return tree
+
+    def sort_tree(self, tree: ttk.Treeview, column: str) -> None:
+        sort_state: dict[str, bool] = getattr(tree, "_sort_state", {})
+        descending = sort_state.get(column, True)
+        rows = [
+            (tree_sort_key(tree.set(item_id, column)), item_id)
+            for item_id in tree.get_children("")
+        ]
+        rows.sort(key=lambda item: item[0], reverse=descending)
+        for index, (_value, item_id) in enumerate(rows):
+            tree.move(item_id, "", index)
+
+        sort_state.clear()
+        sort_state[column] = not descending
+        tree._sort_state = sort_state  # type: ignore[attr-defined]
+
+        heading_titles: dict[str, str] = getattr(tree, "_heading_titles", {})
+        for key in tree["columns"]:
+            title = heading_titles.get(str(key), str(key))
+            suffix = ""
+            if str(key) == column:
+                suffix = " ▼" if descending else " ▲"
+            tree.heading(
+                key,
+                text=f"{title}{suffix}",
+                command=lambda current_tree=tree, current_column=str(key): self.sort_tree(
+                    current_tree,
+                    current_column,
+                ),
+            )
+
+    def open_tree_directory(self, event: tk.Event, tree: ttk.Treeview) -> str | None:
+        if tree.identify_region(event.x, event.y) != "cell":
+            return None
+
+        column_id = tree.identify_column(event.x)
+        if not column_id.startswith("#"):
+            return None
+        try:
+            column_index = int(column_id[1:]) - 1
+        except ValueError:
+            return None
+
+        columns = [str(value) for value in tree["columns"]]
+        if column_index < 0 or column_index >= len(columns):
+            return None
+        if columns[column_index] != "directory":
+            return None
+
+        item_id = tree.identify_row(event.y)
+        if not item_id:
+            return None
+
+        raw_directory = str(tree.set(item_id, "directory") or "").strip()
+        # 演员列表可能汇总多个影片目录。双击时打开列表中的第一个目录，
+        # 避免一次操作弹出大量资源管理器窗口。
+        directory = raw_directory.split(" | ", 1)[0].strip()
+        directory = complete_directory_path(directory, self.directory_prefix_var.get())
+        if not directory:
+            messagebox.showwarning(APP_TITLE, "该条目没有可用的目录路径。")
+            return "break"
+
+        try:
+            if sys.platform == "win32":
+                os.startfile(directory)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", directory])
+            else:
+                subprocess.Popen(["xdg-open", directory])
+            self.status_var.set(f"已打开目录：{directory}")
+        except Exception as exc:
+            messagebox.showerror(
+                APP_TITLE,
+                f"无法打开目录：\n{directory}\n\n{exc}\n\n"
+                "如果 Emby 返回的是服务器本地路径，请在通用设置中填写“打开目录路径前缀”。",
+            )
+        return "break"
 
     def clear_tree(self, tree: ttk.Treeview) -> None:
         for item in tree.get_children():
