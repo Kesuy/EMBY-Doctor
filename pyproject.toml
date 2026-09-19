@@ -1,6 +1,6 @@
 [project]
 name = "emby-media-library-batch-processor"
-version = "1.1.0"
+version = "1.3.0"
 description = "Desktop and CLI batch utilities for selected Emby media libraries"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -115,6 +115,15 @@ class GuiConfigurationTests(unittest.TestCase):
         )
         self.assertEqual(complete_directory_path("/vol1/JAV/ABC-123", ""), "/vol1/JAV/ABC-123")
 
+    def test_tree_sort_key_handles_numbers_text_and_empty_values(self):
+        from emby_gui_app import tree_sort_key
+
+        values = ["10", "2", "beta", "Alpha", ""]
+        self.assertEqual(
+            sorted(values, key=tree_sort_key),
+            ["2", "10", "Alpha", "beta", ""],
+        )
+
     def test_gui_version_entry_does_not_require_tkinter_mainloop(self):
         from emby_gui import main
 
