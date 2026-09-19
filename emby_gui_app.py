@@ -17,8 +17,8 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title(f"{APP_TITLE}  v{__version__}")
-        self.root.geometry("1160x780")
-        self.root.minsize(940, 640)
+        self.root.geometry("1100x720")
+        self.root.minsize(900, 600)
         self.logo_image: tk.PhotoImage | None = None
         self.apply_branding()
 
@@ -61,18 +61,6 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
     def build_ui(self) -> None:
         outer = ttk.Frame(self.root, padding=10)
         outer.pack(fill="both", expand=True)
-
-        brand = ttk.Frame(outer)
-        brand.pack(fill="x", pady=(0, 8))
-        if self.logo_image is not None:
-            ttk.Label(brand, image=self.logo_image).pack(side="left", padx=(0, 10))
-        brand_text = ttk.Frame(brand)
-        brand_text.pack(side="left", fill="x", expand=True)
-        ttk.Label(brand_text, text=APP_TITLE, font=("Segoe UI", 16, "bold")).pack(anchor="w")
-        ttk.Label(
-            brand_text,
-            text=f"Emby Media Library Batch Processor  v{__version__}",
-        ).pack(anchor="w", pady=(2, 0))
 
         conn = ttk.LabelFrame(outer, text="Emby 通用连接设置", padding=10)
         conn.pack(fill="x")
