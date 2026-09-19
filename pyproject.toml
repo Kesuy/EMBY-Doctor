@@ -1,0 +1,22 @@
+[project]
+name = "emby-media-library-batch-processor"
+version = "1.0.0"
+description = "Desktop and CLI batch utilities for selected Emby media libraries"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Kesuy"}]
+keywords = ["emby", "media-library", "metadata", "batch"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
+[project.scripts]
+emby-batch = "emby_batch:main"
+emby-batch-gui = "emby_gui:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+      - name: CLI smoke test
+        run: python emby_batch.py --version
+      - name: GUI entry smoke test
+        run: python emby_gui.py --version
+
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pip pyinstaller
+      - name: Build GUI EXE
+        run: pyinstaller --clean --noconfirm --onefile --windowed --name EmbyMediaLibraryBatchProcessor emby_gui.py
+      - name: Smoke test EXE
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath .\dist\EmbyMediaLibraryBatchProcessor.exe -ArgumentList '--version' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { exit $p.ExitCode }
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EmbyMediaLibraryBatchProcessor-Windows
+          path: dist/EmbyMediaLibraryBatchProcessor.exe
+          if-no-files-found: error
