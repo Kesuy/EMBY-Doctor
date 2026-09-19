@@ -37,7 +37,7 @@ jobs:
       - name: Install PyInstaller
         run: python -m pip install --upgrade pip pyinstaller
       - name: Build GUI EXE
-        run: pyinstaller --clean --noconfirm --onefile --windowed --name EmbyMediaLibraryBatchProcessor emby_gui.py
+        run: pyinstaller --clean --noconfirm --onefile --windowed --icon assets/emby.ico --add-data "assets/emby.png;assets" --name EmbyMediaLibraryBatchProcessor emby_gui.py
       - name: Smoke test EXE
         shell: pwsh
         run: |
