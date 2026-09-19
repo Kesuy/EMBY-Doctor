@@ -57,8 +57,25 @@ class GuiConfigurationTests(unittest.TestCase):
 
         cfg = default_settings()
         libs = cfg["libraries"]
-        self.assertEqual(set(libs), {"delete_actor_images", "scan_missing_actors", "delete_directors"})
+        scopes = cfg["scopes"]
+        expected = {"delete_actor_images", "scan_missing_actors", "delete_directors"}
+        self.assertEqual(set(libs), expected)
+        self.assertEqual(set(scopes), expected)
+        self.assertTrue(all(scopes[key] == "selected" for key in expected))
         self.assertTrue(cfg["connection"]["verify_ssl"])
+
+    def test_media_directory_supports_windows_and_posix_paths(self):
+        from emby_gui import media_directory
+
+        self.assertEqual(
+            media_directory(r"D:\\Media\\JAV\\ABC-123\\ABC-123.mp4"),
+            r"D:\\Media\\JAV\\ABC-123",
+        )
+        self.assertEqual(
+            media_directory("/media/JAV/ABC-123/ABC-123.mp4"),
+            "/media/JAV/ABC-123",
+        )
+        self.assertEqual(media_directory(""), "")
 
     def test_gui_version_entry_does_not_require_tkinter_mainloop(self):
         from emby_gui import main
