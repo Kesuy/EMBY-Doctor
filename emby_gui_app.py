@@ -36,9 +36,13 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         self.timeout_var = tk.StringVar(value=str(self.settings["connection"].get("timeout", 60)))
 
         libs = self.settings["libraries"]
+        scopes = self.settings["scopes"]
         self.actor_lib_var = tk.StringVar(value=str(libs.get("delete_actor_images") or ""))
         self.missing_lib_var = tk.StringVar(value=str(libs.get("scan_missing_actors") or ""))
         self.director_lib_var = tk.StringVar(value=str(libs.get("delete_directors") or ""))
+        self.actor_scope_var = tk.StringVar(value=self.normalize_scope(scopes.get("delete_actor_images")))
+        self.missing_scope_var = tk.StringVar(value=self.normalize_scope(scopes.get("scan_missing_actors")))
+        self.director_scope_var = tk.StringVar(value=self.normalize_scope(scopes.get("delete_directors")))
         self.include_video_var = tk.BooleanVar(
             value=bool(self.settings["scan_missing_actors"].get("include_video", False))
         )
@@ -120,11 +124,32 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         self.build_director_tab()
         ttk.Label(outer, textvariable=self.status_var, anchor="w").pack(fill="x")
 
-    def top_controls(self, parent: ttk.Frame, variable: tk.StringVar) -> ttk.Frame:
+    @staticmethod
+    def normalize_scope(value: Any) -> str:
+        return "all" if str(value or "").lower() == "all" else "selected"
+
+    def top_controls(
+        self,
+        parent: ttk.Frame,
+        variable: tk.StringVar,
+        scope_var: tk.StringVar,
+    ) -> ttk.Frame:
         frame = ttk.Frame(parent)
         frame.pack(fill="x", pady=(0, 8))
-        ttk.Label(frame, text="媒体库 ID（多个用逗号分隔）").pack(side="left")
-        ttk.Entry(frame, textvariable=variable).pack(side="left", fill="x", expand=True, padx=8)
+
+        ttk.Radiobutton(frame, text="全部媒体库", variable=scope_var, value="all").pack(side="left")
+        ttk.Radiobutton(frame, text="指定媒体库", variable=scope_var, value="selected").pack(
+            side="left", padx=(8, 8)
+        )
+        ttk.Label(frame, text="媒体库 ID").pack(side="left")
+        entry = ttk.Entry(frame, textvariable=variable)
+        entry.pack(side="left", fill="x", expand=True, padx=8)
+
+        def sync_scope_entry(*_args: Any) -> None:
+            entry.configure(state="normal" if scope_var.get() == "selected" else "disabled")
+
+        scope_var.trace_add("write", sync_scope_entry)
+        sync_scope_entry()
         return frame
 
     def make_tree(self, parent: ttk.Frame, columns: list[tuple[str, str, int]]) -> ttk.Treeview:
@@ -173,6 +198,11 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
                 "scan_missing_actors": self.missing_lib_var.get().strip(),
                 "delete_directors": self.director_lib_var.get().strip(),
             },
+            "scopes": {
+                "delete_actor_images": self.normalize_scope(self.actor_scope_var.get()),
+                "scan_missing_actors": self.normalize_scope(self.missing_scope_var.get()),
+                "delete_directors": self.normalize_scope(self.director_scope_var.get()),
+            },
             "scan_missing_actors": {"include_video": bool(self.include_video_var.get())},
         }
 
@@ -208,8 +238,13 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
     def libraries(self, value: str) -> list[str]:
         ids = parse_library_ids([value])
         if not ids:
-            raise EmbyError("请填写至少一个媒体库 ID。")
+            raise EmbyError("请选择“指定媒体库”后填写至少一个媒体库 ID。")
         return ids
+
+    def scope_libraries(self, scope: str, value: str) -> list[str | None]:
+        if self.normalize_scope(scope) == "all":
+            return [None]
+        return self.libraries(value)
 
     def set_busy(self, busy: bool, text: str = "") -> None:
         self.busy = busy
