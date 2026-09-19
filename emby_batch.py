@@ -27,7 +27,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Iterable
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 
 class EmbyError(RuntimeError):
