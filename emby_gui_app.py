@@ -206,7 +206,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
 
     def sort_tree(self, tree: ttk.Treeview, column: str) -> None:
         sort_state: dict[str, bool] = getattr(tree, "_sort_state", {})
-        descending = sort_state.get(column, True)
+        descending = sort_state.get(column, False)
         rows = [
             (tree_sort_key(tree.set(item_id, column)), item_id)
             for item_id in tree.get_children("")
