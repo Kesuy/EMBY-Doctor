@@ -93,7 +93,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         )
         ttk.Label(
             conn,
-            text=r"可选，例如 \\192.168.123.111；打开结果目录时会补全为 \\192.168.123.111\结果路径",
+            text=r"可选，例如 \\192.168.1.10；打开结果目录时会补全为 \\192.168.1.10\结果路径",
         ).grid(row=3, column=1, columnspan=3, sticky="w", pady=(0, 4))
 
         btns = ttk.Frame(conn)
