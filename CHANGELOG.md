@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.2.0
+
+- Added right-click actions to missing-actor scan results for copying movie names, refreshing metadata, and opening the containing directory.
+- Added multi-select batch metadata refresh using Emby FullRefresh while preserving existing images.
+- Added a configurable directory path prefix for opening Emby server paths through Windows UNC network shares.
+- Updated the path-prefix UI example to use `\\192.168.1.10`.
+
 ## v1.1.0
 
 - Added independent **all libraries / selected libraries** scope controls for all three tools.
