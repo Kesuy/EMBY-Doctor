@@ -14,7 +14,7 @@ class MissingActorsTabMixin:
             self.missing_lib_var,
             self.missing_scope_var,
         )
-        ttk.Checkbutton(controls, text="同时扫描 Video", variable=self.include_video_var).pack(side="left", padx=3)
+        ttk.Checkbutton(controls, text="同时扫描普通视频（Video）", variable=self.include_video_var).pack(side="left", padx=3)
         b_scan = ttk.Button(controls, text="开始扫描", command=self.scan_missing_actors)
         b_scan.pack(side="left", padx=3)
         b_csv = ttk.Button(controls, text="导出 CSV", command=self.export_missing)
