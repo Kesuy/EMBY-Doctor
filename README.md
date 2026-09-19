@@ -93,6 +93,8 @@ Windows EXE 使用 PyInstaller：
 
 ```powershell
 python -m pip install pyinstaller
+# 先使用 ImageMagick 从 assets/emby.svg 生成标准多尺寸 Windows ICO：
+magick -background none assets/emby.svg -define icon:auto-resize=256,128,64,48,40,32,24,20,16 assets/emby.ico
 pyinstaller --clean --noconfirm --onefile --windowed `
   --icon assets/emby.ico `
   --add-data "assets/emby.png;assets" `
