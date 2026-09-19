@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.3.0
+
+- Added click-to-sort support to all result-list columns, with ascending/descending indicators.
+- Added double-click opening for the **movie directory** column across result lists.
+- Reused the configured directory-path prefix when opening Emby server paths from Windows.
+- Limited actor-list double-click opening to the first associated directory to avoid opening multiple Explorer windows.
+
 ## v1.2.0
 
 - Added right-click actions to missing-actor scan results for copying movie names, refreshing metadata, and opening the containing directory.
