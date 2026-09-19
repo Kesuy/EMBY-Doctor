@@ -95,6 +95,23 @@ class EmbyClient:
         status, _ = self._request("POST", path, data=data)
         return status
 
+    def post(self, path: str, params: dict[str, Any] | None = None) -> int:
+        status, _ = self._request("POST", path, params=params)
+        return status
+
+    def refresh_metadata(self, item_id: str) -> int:
+        """Request a full metadata refresh for one item while keeping existing images."""
+        return self.post(
+            f"/Items/{urllib.parse.quote(item_id, safe='')}/Refresh",
+            {
+                "Recursive": "false",
+                "MetadataRefreshMode": "FullRefresh",
+                "ImageRefreshMode": "FullRefresh",
+                "ReplaceAllMetadata": "true",
+                "ReplaceAllImages": "false",
+            },
+        )
+
     def delete(self, path: str) -> int:
         status, _ = self._request("DELETE", path)
         return status
