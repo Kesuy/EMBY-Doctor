@@ -13,7 +13,9 @@ class DirectorTabMixin:
     def build_director_tab(self) -> None:
         controls = self.top_controls(
             self.director_tab,
+            "delete_directors",
             self.director_lib_var,
+            self.director_lib_name_var,
             self.director_scope_var,
         )
         b_scan = ttk.Button(controls, text="扫描预览", command=self.scan_directors)
