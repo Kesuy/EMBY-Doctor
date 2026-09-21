@@ -48,6 +48,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         self.missing_rows: list[dict[str, Any]] = []
         self.director_rows: list[dict[str, Any]] = []
         self.action_buttons: list[ttk.Button] = []
+        self.scope_sync_callbacks: list[Callable[[], None]] = []
 
         self.url_var = tk.StringVar(value=str(self.settings["connection"].get("url") or ""))
         self.api_key_var = tk.StringVar(value=str(self.settings["connection"].get("api_key") or ""))
@@ -56,11 +57,31 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         self.timeout_var = tk.StringVar(value=str(self.settings["connection"].get("timeout", 60)))
 
         libs = self.settings["libraries"]
+        library_names = self.settings.get("library_names") or {}
         scopes = self.settings["scopes"]
         paths = self.settings["paths"]
         self.actor_lib_var = tk.StringVar(value=str(libs.get("delete_actor_images") or ""))
         self.missing_lib_var = tk.StringVar(value=str(libs.get("scan_missing_actors") or ""))
         self.director_lib_var = tk.StringVar(value=str(libs.get("delete_directors") or ""))
+        self.library_name_maps: dict[str, dict[str, str]] = {}
+        for key in ("delete_actor_images", "scan_missing_actors", "delete_directors"):
+            raw_names = library_names.get(key) if isinstance(library_names, dict) else {}
+            if not isinstance(raw_names, dict):
+                raw_names = {}
+            self.library_name_maps[key] = {
+                str(library_id): str(name)
+                for library_id, name in raw_names.items()
+                if str(library_id).strip() and str(name).strip()
+            }
+        self.actor_lib_name_var = tk.StringVar(
+            value=self.library_selection_text("delete_actor_images", self.actor_lib_var.get())
+        )
+        self.missing_lib_name_var = tk.StringVar(
+            value=self.library_selection_text("scan_missing_actors", self.missing_lib_var.get())
+        )
+        self.director_lib_name_var = tk.StringVar(
+            value=self.library_selection_text("delete_directors", self.director_lib_var.get())
+        )
         self.actor_scope_var = tk.StringVar(value=self.normalize_scope(scopes.get("delete_actor_images")))
         self.missing_scope_var = tk.StringVar(value=self.normalize_scope(scopes.get("scan_missing_actors")))
         self.director_scope_var = tk.StringVar(value=self.normalize_scope(scopes.get("delete_directors")))
@@ -150,7 +171,9 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
     def top_controls(
         self,
         parent: ttk.Frame,
+        selection_key: str,
         variable: tk.StringVar,
+        display_var: tk.StringVar,
         scope_var: tk.StringVar,
     ) -> ttk.Frame:
         frame = ttk.Frame(parent)
@@ -160,16 +183,183 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         ttk.Radiobutton(frame, text="指定媒体库", variable=scope_var, value="selected").pack(
             side="left", padx=(8, 8)
         )
-        ttk.Label(frame, text="媒体库 ID").pack(side="left")
-        entry = ttk.Entry(frame, textvariable=variable)
-        entry.pack(side="left", fill="x", expand=True, padx=8)
+        ttk.Label(frame, text="媒体库").pack(side="left")
+        entry = ttk.Entry(frame, textvariable=display_var, state="readonly")
+        entry.pack(side="left", fill="x", expand=True, padx=(8, 4))
+        select_button = ttk.Button(
+            frame,
+            text="选择媒体库…",
+            command=lambda: self.choose_libraries(selection_key, variable, display_var, scope_var),
+        )
+        select_button.pack(side="left", padx=(4, 0))
+        self.action_buttons.append(select_button)
 
         def sync_scope_entry(*_args: Any) -> None:
-            entry.configure(state="normal" if scope_var.get() == "selected" else "disabled")
+            selected = self.normalize_scope(scope_var.get()) == "selected"
+            entry.configure(state="readonly" if selected else "disabled")
+            select_button.configure(state="normal" if selected and not self.busy else "disabled")
 
         scope_var.trace_add("write", sync_scope_entry)
+        self.scope_sync_callbacks.append(sync_scope_entry)
         sync_scope_entry()
         return frame
+
+    def library_selection_text(self, selection_key: str, value: str) -> str:
+        ids = parse_library_ids([value])
+        if not ids:
+            return "尚未选择"
+        names = self.library_name_maps.get(selection_key, {})
+        resolved = [names.get(library_id, "").strip() for library_id in ids]
+        if all(resolved):
+            return "、".join(resolved)
+        visible = [name for name in resolved if name]
+        missing = len(ids) - len(visible)
+        if visible:
+            return "、".join(visible) + f"（另 {missing} 个名称待刷新）"
+        return f"已保存 {len(ids)} 个媒体库（点击“选择媒体库…”加载名称）"
+
+    def library_display_name(self, selection_key: str, library_id: str) -> str:
+        name = self.library_name_maps.get(selection_key, {}).get(str(library_id), "").strip()
+        if name:
+            return name
+        ids = parse_library_ids([
+            {
+                "delete_actor_images": self.actor_lib_var.get(),
+                "scan_missing_actors": self.missing_lib_var.get(),
+                "delete_directors": self.director_lib_var.get(),
+            }.get(selection_key, "")
+        ])
+        try:
+            return f"媒体库 {ids.index(str(library_id)) + 1}"
+        except ValueError:
+            return "媒体库"
+
+    def refresh_library_names(self, libraries: list[dict[str, str]]) -> None:
+        available = {
+            str(item.get("Id") or ""): str(item.get("Name") or "")
+            for item in libraries
+            if str(item.get("Id") or "").strip()
+        }
+        bindings = (
+            ("delete_actor_images", self.actor_lib_var, self.actor_lib_name_var),
+            ("scan_missing_actors", self.missing_lib_var, self.missing_lib_name_var),
+            ("delete_directors", self.director_lib_var, self.director_lib_name_var),
+        )
+        for selection_key, variable, display_var in bindings:
+            name_map = self.library_name_maps.setdefault(selection_key, {})
+            for library_id in parse_library_ids([variable.get()]):
+                if available.get(library_id):
+                    name_map[library_id] = available[library_id]
+            display_var.set(self.library_selection_text(selection_key, variable.get()))
+
+    def choose_libraries(
+        self,
+        selection_key: str,
+        variable: tk.StringVar,
+        display_var: tk.StringVar,
+        scope_var: tk.StringVar,
+    ) -> None:
+        try:
+            client = self.client()
+        except Exception as exc:
+            self.job_error(exc)
+            return
+
+        current_ids = set(parse_library_ids([variable.get()]))
+
+        def worker() -> list[dict[str, str]]:
+            return client.list_libraries()
+
+        def done(libraries: list[dict[str, str]]) -> None:
+            self.refresh_library_names(libraries)
+            self.show_library_selector(
+                selection_key,
+                variable,
+                display_var,
+                scope_var,
+                libraries,
+                current_ids,
+            )
+
+        self.run_job("正在读取 Emby 媒体库列表……", worker, done)
+
+    def show_library_selector(
+        self,
+        selection_key: str,
+        variable: tk.StringVar,
+        display_var: tk.StringVar,
+        scope_var: tk.StringVar,
+        libraries: list[dict[str, str]],
+        current_ids: set[str],
+    ) -> None:
+        if not libraries:
+            messagebox.showwarning(APP_TITLE, "Emby 没有返回可选择的媒体库。")
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("选择媒体库")
+        dialog.transient(self.root)
+        dialog.resizable(True, True)
+        dialog.minsize(420, 320)
+
+        ttk.Label(
+            dialog,
+            text="单击可单选；按住 Ctrl 或 Shift 可多选媒体库。",
+            padding=(12, 12, 12, 6),
+        ).pack(fill="x")
+
+        wrap = ttk.Frame(dialog, padding=(12, 0, 12, 8))
+        wrap.pack(fill="both", expand=True)
+        listbox = tk.Listbox(
+            wrap,
+            selectmode=tk.EXTENDED,
+            exportselection=False,
+            activestyle="dotbox",
+        )
+        scrollbar = ttk.Scrollbar(wrap, orient="vertical", command=listbox.yview)
+        listbox.configure(yscrollcommand=scrollbar.set)
+        listbox.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        for index, item in enumerate(libraries):
+            listbox.insert("end", item["Name"])
+            if item["Id"] in current_ids:
+                listbox.selection_set(index)
+        if listbox.curselection():
+            listbox.see(listbox.curselection()[0])
+
+        buttons = ttk.Frame(dialog, padding=(12, 0, 12, 12))
+        buttons.pack(fill="x")
+
+        def select_all() -> None:
+            listbox.selection_set(0, "end")
+
+        def clear_all() -> None:
+            listbox.selection_clear(0, "end")
+
+        def confirm() -> None:
+            indexes = list(listbox.curselection())
+            if not indexes:
+                messagebox.showwarning(APP_TITLE, "请至少选择一个媒体库。", parent=dialog)
+                return
+            selected = [libraries[index] for index in indexes]
+            variable.set(",".join(item["Id"] for item in selected))
+            name_map = self.library_name_maps.setdefault(selection_key, {})
+            for item in selected:
+                name_map[item["Id"]] = item["Name"]
+            display_var.set("、".join(item["Name"] for item in selected))
+            scope_var.set("selected")
+            self.save_all_settings(show_message=False)
+            dialog.destroy()
+
+        ttk.Button(buttons, text="全选", command=select_all).pack(side="left")
+        ttk.Button(buttons, text="清空", command=clear_all).pack(side="left", padx=(6, 0))
+        ttk.Button(buttons, text="取消", command=dialog.destroy).pack(side="right")
+        ttk.Button(buttons, text="确定", command=confirm).pack(side="right", padx=(0, 6))
+
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        dialog.grab_set()
+        dialog.focus_set()
 
     def make_tree(self, parent: ttk.Frame, columns: list[tuple[str, str, int]]) -> ttk.Treeview:
         wrap = ttk.Frame(parent)
@@ -312,6 +502,9 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
                 "scan_missing_actors": self.missing_lib_var.get().strip(),
                 "delete_directors": self.director_lib_var.get().strip(),
             },
+            "library_names": {
+                key: dict(value) for key, value in self.library_name_maps.items()
+            },
             "scopes": {
                 "delete_actor_images": self.normalize_scope(self.actor_scope_var.get()),
                 "scan_missing_actors": self.normalize_scope(self.missing_scope_var.get()),
@@ -352,7 +545,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
     def libraries(self, value: str) -> list[str]:
         ids = parse_library_ids([value])
         if not ids:
-            raise EmbyError("请选择“指定媒体库”后填写至少一个媒体库 ID。")
+            raise EmbyError("请选择“指定媒体库”后至少选择一个媒体库。")
         return ids
 
     def scope_libraries(self, scope: str, value: str) -> list[str | None]:
@@ -365,6 +558,11 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         for btn in self.action_buttons:
             try:
                 btn.configure(state="disabled" if busy else "normal")
+            except Exception:
+                pass
+        for callback in self.scope_sync_callbacks:
+            try:
+                callback()
             except Exception:
                 pass
         if text:
@@ -402,13 +600,19 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
             self.job_error(exc)
             return
 
-        def worker() -> dict[str, Any]:
-            return client.get_json("/System/Info")
+        def worker() -> tuple[dict[str, Any], list[dict[str, str]]]:
+            return client.get_json("/System/Info"), client.list_libraries()
 
-        def done(result: dict[str, Any]) -> None:
-            server_name = result.get("ServerName") or result.get("Name") or "Emby Server"
-            version = result.get("Version") or "未知"
-            messagebox.showinfo(APP_TITLE, f"连接成功。\n服务器：{server_name}\n版本：{version}")
+        def done(result: tuple[dict[str, Any], list[dict[str, str]]]) -> None:
+            info, libraries = result
+            self.refresh_library_names(libraries)
+            self.save_all_settings(show_message=False)
+            server_name = info.get("ServerName") or info.get("Name") or "Emby Server"
+            version = info.get("Version") or "未知"
+            messagebox.showinfo(
+                APP_TITLE,
+                f"连接成功。\n服务器：{server_name}\n版本：{version}\n媒体库：{len(libraries)} 个",
+            )
 
         self.run_job("正在测试 Emby 连接……", worker, done)
 
