@@ -101,6 +101,11 @@ def default_settings() -> dict[str, Any]:
             "scan_missing_actors": "",
             "delete_directors": "",
         },
+        "library_names": {
+            "delete_actor_images": {},
+            "scan_missing_actors": {},
+            "delete_directors": {},
+        },
         "scopes": {
             "delete_actor_images": "selected",
             "scan_missing_actors": "selected",
@@ -123,7 +128,14 @@ def load_settings() -> dict[str, Any]:
         return cfg
 
     if isinstance(loaded, dict):
-        for section in ("connection", "paths", "libraries", "scopes", "scan_missing_actors"):
+        for section in (
+            "connection",
+            "paths",
+            "libraries",
+            "library_names",
+            "scopes",
+            "scan_missing_actors",
+        ):
             value = loaded.get(section)
             if isinstance(value, dict):
                 cfg[section].update(value)
