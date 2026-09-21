@@ -93,6 +93,8 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         self.status_var = tk.StringVar(value=f"设置文件：{settings_path()}")
 
         self.build_ui()
+        self.root.bind("<Configure>", self.on_root_configure, add="+")
+        self.root.bind("<Unmap>", lambda _event: self.close_library_dropdown(), add="+")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def apply_branding(self) -> None:
@@ -184,22 +186,76 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         ttk.Radiobutton(frame, text="指定媒体库", variable=scope_var, value="selected").pack(
             side="left", padx=(8, 8)
         )
-        ttk.Label(frame, text="媒体库").pack(side="left")
 
-        selector_wrap = ttk.Frame(frame)
-        selector_wrap.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        selector_shell = tk.Frame(
+            frame,
+            background="#ffffff",
+            highlightbackground="#cfcfd4",
+            highlightcolor="#8f8f96",
+            highlightthickness=1,
+            bd=0,
+        )
+        selector_shell.pack(side="left", fill="x", expand=True)
 
-        entry = ttk.Entry(selector_wrap, textvariable=display_var, state="readonly")
-        entry.pack(side="left", fill="x", expand=True)
+        chip_frame = tk.Frame(selector_shell, background="#ffffff")
+        chip_frame.pack(side="left", fill="x", expand=True, padx=(7, 3), pady=4)
 
-        dropdown_button = ttk.Button(selector_wrap, text="▼", width=3)
-        dropdown_button.pack(side="left", padx=(2, 0))
+        dropdown_button = ttk.Button(selector_shell, text="⌄", width=3)
+        dropdown_button.pack(side="right", padx=(0, 3), pady=2)
+
+        def render_chips(*_args: Any) -> None:
+            for child in chip_frame.winfo_children():
+                child.destroy()
+
+            ids = parse_library_ids([variable.get()])
+            names = self.library_name_maps.get(selection_key, {})
+            selected_names = [names.get(library_id, "").strip() for library_id in ids]
+            selected_names = [name for name in selected_names if name]
+
+            if not ids:
+                tk.Label(
+                    chip_frame,
+                    text="请选择媒体库",
+                    background="#ffffff",
+                    foreground="#777777",
+                    bd=0,
+                    padx=2,
+                    pady=1,
+                ).pack(side="left")
+                return
+
+            if not selected_names:
+                selected_names = [f"已选择 {len(ids)} 个"]
+
+            max_visible = 6
+            for name in selected_names[:max_visible]:
+                tk.Label(
+                    chip_frame,
+                    text=name,
+                    background="#ececf0",
+                    foreground="#333333",
+                    bd=0,
+                    padx=7,
+                    pady=2,
+                ).pack(side="left", padx=(0, 5))
+
+            hidden = len(selected_names) - max_visible
+            if hidden > 0:
+                tk.Label(
+                    chip_frame,
+                    text=f"+{hidden}",
+                    background="#ececf0",
+                    foreground="#555555",
+                    bd=0,
+                    padx=7,
+                    pady=2,
+                ).pack(side="left")
 
         def toggle_dropdown(_event: Any = None) -> str:
             if self.busy or self.normalize_scope(scope_var.get()) != "selected":
                 return "break"
             self.toggle_library_dropdown(
-                selector_wrap,
+                selector_shell,
                 selection_key,
                 variable,
                 display_var,
@@ -207,19 +263,22 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
             )
             return "break"
 
-        entry.bind("<Button-1>", toggle_dropdown)
+        selector_shell.bind("<Button-1>", toggle_dropdown)
+        chip_frame.bind("<Button-1>", toggle_dropdown)
         dropdown_button.configure(command=toggle_dropdown)
         self.action_buttons.append(dropdown_button)
 
         def sync_scope_selector(*_args: Any) -> None:
             selected = self.normalize_scope(scope_var.get()) == "selected"
-            entry.configure(state="readonly" if selected and not self.busy else "disabled")
             dropdown_button.configure(state="normal" if selected and not self.busy else "disabled")
             if not selected:
                 self.close_library_dropdown()
 
+        variable.trace_add("write", render_chips)
+        display_var.trace_add("write", render_chips)
         scope_var.trace_add("write", sync_scope_selector)
         self.scope_sync_callbacks.append(sync_scope_selector)
+        render_chips()
         sync_scope_selector()
         return frame
 
@@ -271,6 +330,10 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
                     name_map[library_id] = available[library_id]
             display_var.set(self.library_selection_text(selection_key, variable.get()))
 
+    def on_root_configure(self, event: tk.Event) -> None:
+        if event.widget is self.root and self.library_dropdown_popup is not None:
+            self.close_library_dropdown()
+
     def close_library_dropdown(self) -> None:
         popup = self.library_dropdown_popup
         self.library_dropdown_popup = None
@@ -287,7 +350,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
 
     def toggle_library_dropdown(
         self,
-        anchor: ttk.Frame,
+        anchor: tk.Frame,
         selection_key: str,
         variable: tk.StringVar,
         display_var: tk.StringVar,
@@ -316,10 +379,17 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         popup.overrideredirect(True)
         popup.transient(self.root)
 
-        shell = ttk.Frame(popup, padding=8, relief="solid", borderwidth=1)
+        shell = tk.Frame(
+            popup,
+            background="#ffffff",
+            highlightbackground="#d6d6db",
+            highlightthickness=1,
+            bd=0,
+        )
         shell.pack(fill="both", expand=True)
 
-        ttk.Label(shell, text="选择媒体库").pack(anchor="w", pady=(0, 6))
+        body = tk.Frame(shell, background="#ffffff")
+        body.pack(fill="both", expand=True, padx=8, pady=(8, 5))
 
         flags: dict[str, tk.BooleanVar] = {}
         for item in libraries:
@@ -329,7 +399,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
             flag = tk.BooleanVar(value=library_id in current_ids)
             flags[library_id] = flag
             ttk.Checkbutton(
-                shell,
+                body,
                 text=library_name,
                 variable=flag,
                 command=lambda: self.apply_library_checkbox_selection(
@@ -340,14 +410,15 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
                     display_var,
                     scope_var,
                 ),
-            ).pack(anchor="w", fill="x", pady=1)
+            ).pack(anchor="w", fill="x", pady=2)
 
-        ttk.Separator(shell).pack(fill="x", pady=(6, 6))
+        ttk.Separator(shell).pack(fill="x", padx=8, pady=(2, 4))
         footer = ttk.Frame(shell)
-        footer.pack(fill="x")
+        footer.pack(fill="x", padx=8, pady=(0, 7))
         ttk.Button(
             footer,
             text="全选",
+            width=7,
             command=lambda: self.set_all_library_checkboxes(
                 True,
                 libraries,
@@ -361,6 +432,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         ttk.Button(
             footer,
             text="清空",
+            width=7,
             command=lambda: self.set_all_library_checkboxes(
                 False,
                 libraries,
@@ -371,23 +443,22 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
                 scope_var,
             ),
         ).pack(side="left", padx=(6, 0))
-        ttk.Button(footer, text="完成", command=self.close_library_dropdown).pack(side="right")
+        ttk.Button(footer, text="完成", width=7, command=self.close_library_dropdown).pack(side="right")
 
         popup.update_idletasks()
-        width = max(anchor.winfo_width(), popup.winfo_reqwidth(), 260)
+        width = max(anchor.winfo_width(), popup.winfo_reqwidth(), 300)
         height = popup.winfo_reqheight()
         x = anchor.winfo_rootx()
-        y = anchor.winfo_rooty() + anchor.winfo_height()
+        y = anchor.winfo_rooty() + anchor.winfo_height() + 2
 
         screen_height = popup.winfo_screenheight()
         if y + height > screen_height - 40:
-            y = max(0, anchor.winfo_rooty() - height)
+            y = max(0, anchor.winfo_rooty() - height - 2)
 
         popup.geometry(f"{width}x{height}+{x}+{y}")
         popup.deiconify()
         popup.lift()
         popup.focus_force()
-        popup.grab_set()
         popup.bind("<Escape>", lambda _event: self.close_library_dropdown())
 
         # Keep Tk variable wrappers alive while the popup is open.
