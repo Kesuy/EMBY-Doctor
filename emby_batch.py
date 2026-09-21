@@ -91,6 +91,18 @@ class EmbyClient:
             return {}
         return json.loads(raw.decode("utf-8"))
 
+    def list_libraries(self) -> list[dict[str, str]]:
+        """Return Emby media libraries as stable ID/name pairs."""
+        data = self.get_json("/Library/MediaFolders")
+        libraries: list[dict[str, str]] = []
+        for item in data.get("Items") or []:
+            library_id = str(item.get("Id") or "").strip()
+            if not library_id:
+                continue
+            name = str(item.get("Name") or "").strip() or library_id
+            libraries.append({"Id": library_id, "Name": name})
+        return sorted(libraries, key=lambda item: item["Name"].casefold())
+
     def post_json(self, path: str, data: dict[str, Any]) -> int:
         status, _ = self._request("POST", path, data=data)
         return status
