@@ -38,6 +38,28 @@ class PureFunctionTests(unittest.TestCase):
         self.assertEqual(params["ReplaceAllImages"], "false")
         self.assertIsNone(data)
 
+    def test_list_libraries_returns_sorted_id_name_pairs(self):
+        class RecordingClient(EmbyClient):
+            def get_json(self, path, params=None):
+                self.assert_path = path
+                return {
+                    "Items": [
+                        {"Id": "2", "Name": "电视剧"},
+                        {"Id": "1", "Name": "电影"},
+                        {"Id": "", "Name": "忽略"},
+                    ]
+                }
+
+        c = RecordingClient("http://localhost:8096", "x")
+        self.assertEqual(
+            c.list_libraries(),
+            [
+                {"Id": "1", "Name": "电影"},
+                {"Id": "2", "Name": "电视剧"},
+            ],
+        )
+        self.assertEqual(c.assert_path, "/Library/MediaFolders")
+
     def test_parse_library_ids(self):
         self.assertEqual(parse_library_ids(["1,2", "2", " 3 "]), ["1", "2", "3"])
 
@@ -80,6 +102,8 @@ class GuiConfigurationTests(unittest.TestCase):
         expected = {"delete_actor_images", "scan_missing_actors", "delete_directors"}
         self.assertEqual(set(libs), expected)
         self.assertEqual(set(scopes), expected)
+        self.assertEqual(set(cfg["library_names"]), expected)
+        self.assertTrue(all(cfg["library_names"][key] == {} for key in expected))
         self.assertTrue(all(scopes[key] == "selected" for key in expected))
         self.assertTrue(cfg["connection"]["verify_ssl"])
         self.assertEqual(cfg["paths"]["directory_prefix"], "")
