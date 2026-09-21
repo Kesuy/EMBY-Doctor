@@ -15,7 +15,9 @@ class MissingActorsTabMixin:
     def build_missing_tab(self) -> None:
         controls = self.top_controls(
             self.missing_tab,
+            "scan_missing_actors",
             self.missing_lib_var,
+            self.missing_lib_name_var,
             self.missing_scope_var,
         )
         ttk.Checkbutton(controls, text="同时扫描普通视频（Video）", variable=self.include_video_var).pack(side="left", padx=3)
@@ -167,7 +169,11 @@ class MissingActorsTabMixin:
         def worker() -> list[dict[str, Any]]:
             missing: list[dict[str, Any]] = []
             for library_id in libraries:
-                scope_label = "全部媒体库" if library_id is None else str(library_id)
+                scope_label = (
+                    "全部媒体库"
+                    if library_id is None
+                    else self.library_display_name("scan_missing_actors", str(library_id))
+                )
                 for movie in client.query_items(
                     library_id,
                     include_item_types=item_types,
