@@ -49,6 +49,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         self.director_rows: list[dict[str, Any]] = []
         self.action_buttons: list[Any] = []
         self.scope_sync_callbacks: list[Callable[[], None]] = []
+        self.library_dropdown_popup: tk.Toplevel | None = None
 
         self.url_var = tk.StringVar(value=str(self.settings["connection"].get("url") or ""))
         self.api_key_var = tk.StringVar(value=str(self.settings["connection"].get("api_key") or ""))
@@ -185,24 +186,37 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         )
         ttk.Label(frame, text="媒体库").pack(side="left")
 
-        selector = ttk.Menubutton(frame, textvariable=display_var)
-        selector.pack(side="left", fill="x", expand=True, padx=(8, 0))
-        menu = tk.Menu(selector, tearoff=False)
-        selector.configure(menu=menu)
-        menu.configure(
-            postcommand=lambda: self.populate_library_menu(
-                menu,
+        selector_wrap = ttk.Frame(frame)
+        selector_wrap.pack(side="left", fill="x", expand=True, padx=(8, 0))
+
+        entry = ttk.Entry(selector_wrap, textvariable=display_var, state="readonly")
+        entry.pack(side="left", fill="x", expand=True)
+
+        dropdown_button = ttk.Button(selector_wrap, text="▼", width=3)
+        dropdown_button.pack(side="left", padx=(2, 0))
+
+        def toggle_dropdown(_event: Any = None) -> str:
+            if self.busy or self.normalize_scope(scope_var.get()) != "selected":
+                return "break"
+            self.toggle_library_dropdown(
+                selector_wrap,
                 selection_key,
                 variable,
                 display_var,
                 scope_var,
             )
-        )
-        self.action_buttons.append(selector)
+            return "break"
+
+        entry.bind("<Button-1>", toggle_dropdown)
+        dropdown_button.configure(command=toggle_dropdown)
+        self.action_buttons.append(dropdown_button)
 
         def sync_scope_selector(*_args: Any) -> None:
             selected = self.normalize_scope(scope_var.get()) == "selected"
-            selector.configure(state="normal" if selected and not self.busy else "disabled")
+            entry.configure(state="readonly" if selected and not self.busy else "disabled")
+            dropdown_button.configure(state="normal" if selected and not self.busy else "disabled")
+            if not selected:
+                self.close_library_dropdown()
 
         scope_var.trace_add("write", sync_scope_selector)
         self.scope_sync_callbacks.append(sync_scope_selector)
@@ -257,44 +271,68 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
                     name_map[library_id] = available[library_id]
             display_var.set(self.library_selection_text(selection_key, variable.get()))
 
-    def populate_library_menu(
+    def close_library_dropdown(self) -> None:
+        popup = self.library_dropdown_popup
+        self.library_dropdown_popup = None
+        if popup is None:
+            return
+        try:
+            popup.grab_release()
+        except Exception:
+            pass
+        try:
+            popup.destroy()
+        except Exception:
+            pass
+
+    def toggle_library_dropdown(
         self,
-        menu: tk.Menu,
+        anchor: ttk.Frame,
         selection_key: str,
         variable: tk.StringVar,
         display_var: tk.StringVar,
         scope_var: tk.StringVar,
     ) -> None:
-        menu.delete(0, "end")
+        if self.library_dropdown_popup is not None:
+            self.close_library_dropdown()
+            return
+
         try:
             libraries = self.client().list_libraries()
         except Exception as exc:
-            menu.add_command(label="加载媒体库失败", state="disabled")
-            self.status_var.set(f"读取媒体库失败：{exc}")
-            self.root.after_idle(
-                lambda err=exc: messagebox.showerror(APP_TITLE, f"读取媒体库失败：\n{err}")
-            )
+            self.job_error(exc)
             return
 
         if not libraries:
-            menu.add_command(label="没有可用的媒体库", state="disabled")
+            messagebox.showwarning(APP_TITLE, "Emby 没有返回可选择的媒体库。")
             return
 
         self.refresh_library_names(libraries)
         current_ids = set(parse_library_ids([variable.get()]))
-        flags: dict[str, tk.BooleanVar] = {}
-        name_map = self.library_name_maps.setdefault(selection_key, {})
 
+        popup = tk.Toplevel(self.root)
+        self.library_dropdown_popup = popup
+        popup.withdraw()
+        popup.overrideredirect(True)
+        popup.transient(self.root)
+
+        shell = ttk.Frame(popup, padding=8, relief="solid", borderwidth=1)
+        shell.pack(fill="both", expand=True)
+
+        ttk.Label(shell, text="选择媒体库").pack(anchor="w", pady=(0, 6))
+
+        flags: dict[str, tk.BooleanVar] = {}
         for item in libraries:
             library_id = str(item["Id"])
             library_name = str(item["Name"])
-            name_map[library_id] = library_name
+            self.library_name_maps.setdefault(selection_key, {})[library_id] = library_name
             flag = tk.BooleanVar(value=library_id in current_ids)
             flags[library_id] = flag
-            menu.add_checkbutton(
-                label=library_name,
+            ttk.Checkbutton(
+                shell,
+                text=library_name,
                 variable=flag,
-                command=lambda: self.apply_library_menu_selection(
+                command=lambda: self.apply_library_checkbox_selection(
                     libraries,
                     flags,
                     selection_key,
@@ -302,12 +340,15 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
                     display_var,
                     scope_var,
                 ),
-            )
+            ).pack(anchor="w", fill="x", pady=1)
 
-        menu.add_separator()
-        menu.add_command(
-            label="全选",
-            command=lambda: self.set_all_library_menu_items(
+        ttk.Separator(shell).pack(fill="x", pady=(6, 6))
+        footer = ttk.Frame(shell)
+        footer.pack(fill="x")
+        ttk.Button(
+            footer,
+            text="全选",
+            command=lambda: self.set_all_library_checkboxes(
                 True,
                 libraries,
                 flags,
@@ -316,10 +357,11 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
                 display_var,
                 scope_var,
             ),
-        )
-        menu.add_command(
-            label="清空选择",
-            command=lambda: self.set_all_library_menu_items(
+        ).pack(side="left")
+        ttk.Button(
+            footer,
+            text="清空",
+            command=lambda: self.set_all_library_checkboxes(
                 False,
                 libraries,
                 flags,
@@ -328,12 +370,30 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
                 display_var,
                 scope_var,
             ),
-        )
+        ).pack(side="left", padx=(6, 0))
+        ttk.Button(footer, text="完成", command=self.close_library_dropdown).pack(side="right")
 
-        # Keep Tk variable wrappers alive for the lifetime of this posted menu.
-        menu._library_flags = flags  # type: ignore[attr-defined]
+        popup.update_idletasks()
+        width = max(anchor.winfo_width(), popup.winfo_reqwidth(), 260)
+        height = popup.winfo_reqheight()
+        x = anchor.winfo_rootx()
+        y = anchor.winfo_rooty() + anchor.winfo_height()
 
-    def set_all_library_menu_items(
+        screen_height = popup.winfo_screenheight()
+        if y + height > screen_height - 40:
+            y = max(0, anchor.winfo_rooty() - height)
+
+        popup.geometry(f"{width}x{height}+{x}+{y}")
+        popup.deiconify()
+        popup.lift()
+        popup.focus_force()
+        popup.grab_set()
+        popup.bind("<Escape>", lambda _event: self.close_library_dropdown())
+
+        # Keep Tk variable wrappers alive while the popup is open.
+        popup._library_flags = flags  # type: ignore[attr-defined]
+
+    def set_all_library_checkboxes(
         self,
         selected: bool,
         libraries: list[dict[str, str]],
@@ -345,7 +405,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
     ) -> None:
         for flag in flags.values():
             flag.set(selected)
-        self.apply_library_menu_selection(
+        self.apply_library_checkbox_selection(
             libraries,
             flags,
             selection_key,
@@ -354,7 +414,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
             scope_var,
         )
 
-    def apply_library_menu_selection(
+    def apply_library_checkbox_selection(
         self,
         libraries: list[dict[str, str]],
         flags: dict[str, tk.BooleanVar],
