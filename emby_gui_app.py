@@ -47,7 +47,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         self.actor_rows: list[dict[str, Any]] = []
         self.missing_rows: list[dict[str, Any]] = []
         self.director_rows: list[dict[str, Any]] = []
-        self.action_buttons: list[ttk.Button] = []
+        self.action_buttons: list[Any] = []
         self.scope_sync_callbacks: list[Callable[[], None]] = []
 
         self.url_var = tk.StringVar(value=str(self.settings["connection"].get("url") or ""))
@@ -184,24 +184,29 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
             side="left", padx=(8, 8)
         )
         ttk.Label(frame, text="媒体库").pack(side="left")
-        entry = ttk.Entry(frame, textvariable=display_var, state="readonly")
-        entry.pack(side="left", fill="x", expand=True, padx=(8, 4))
-        select_button = ttk.Button(
-            frame,
-            text="选择媒体库…",
-            command=lambda: self.choose_libraries(selection_key, variable, display_var, scope_var),
+
+        selector = ttk.Menubutton(frame, textvariable=display_var)
+        selector.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        menu = tk.Menu(selector, tearoff=False)
+        selector.configure(menu=menu)
+        menu.configure(
+            postcommand=lambda: self.populate_library_menu(
+                menu,
+                selection_key,
+                variable,
+                display_var,
+                scope_var,
+            )
         )
-        select_button.pack(side="left", padx=(4, 0))
-        self.action_buttons.append(select_button)
+        self.action_buttons.append(selector)
 
-        def sync_scope_entry(*_args: Any) -> None:
+        def sync_scope_selector(*_args: Any) -> None:
             selected = self.normalize_scope(scope_var.get()) == "selected"
-            entry.configure(state="readonly" if selected else "disabled")
-            select_button.configure(state="normal" if selected and not self.busy else "disabled")
+            selector.configure(state="normal" if selected and not self.busy else "disabled")
 
-        scope_var.trace_add("write", sync_scope_entry)
-        self.scope_sync_callbacks.append(sync_scope_entry)
-        sync_scope_entry()
+        scope_var.trace_add("write", sync_scope_selector)
+        self.scope_sync_callbacks.append(sync_scope_selector)
+        sync_scope_selector()
         return frame
 
     def library_selection_text(self, selection_key: str, value: str) -> str:
@@ -216,7 +221,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         missing = len(ids) - len(visible)
         if visible:
             return "、".join(visible) + f"（另 {missing} 个名称待刷新）"
-        return f"已保存 {len(ids)} 个媒体库（点击“选择媒体库…”加载名称）"
+        return f"已保存 {len(ids)} 个媒体库（点击下拉框加载名称）"
 
     def library_display_name(self, selection_key: str, library_id: str) -> str:
         name = self.library_name_maps.get(selection_key, {}).get(str(library_id), "").strip()
@@ -252,114 +257,131 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
                     name_map[library_id] = available[library_id]
             display_var.set(self.library_selection_text(selection_key, variable.get()))
 
-    def choose_libraries(
+    def populate_library_menu(
         self,
+        menu: tk.Menu,
         selection_key: str,
         variable: tk.StringVar,
         display_var: tk.StringVar,
         scope_var: tk.StringVar,
     ) -> None:
+        menu.delete(0, "end")
         try:
-            client = self.client()
+            libraries = self.client().list_libraries()
         except Exception as exc:
-            self.job_error(exc)
+            menu.add_command(label="加载媒体库失败", state="disabled")
+            self.status_var.set(f"读取媒体库失败：{exc}")
+            self.root.after_idle(
+                lambda err=exc: messagebox.showerror(APP_TITLE, f"读取媒体库失败：\n{err}")
+            )
             return
 
+        if not libraries:
+            menu.add_command(label="没有可用的媒体库", state="disabled")
+            return
+
+        self.refresh_library_names(libraries)
         current_ids = set(parse_library_ids([variable.get()]))
+        flags: dict[str, tk.BooleanVar] = {}
+        name_map = self.library_name_maps.setdefault(selection_key, {})
 
-        def worker() -> list[dict[str, str]]:
-            return client.list_libraries()
+        for item in libraries:
+            library_id = str(item["Id"])
+            library_name = str(item["Name"])
+            name_map[library_id] = library_name
+            flag = tk.BooleanVar(value=library_id in current_ids)
+            flags[library_id] = flag
+            menu.add_checkbutton(
+                label=library_name,
+                variable=flag,
+                command=lambda: self.apply_library_menu_selection(
+                    libraries,
+                    flags,
+                    selection_key,
+                    variable,
+                    display_var,
+                    scope_var,
+                ),
+            )
 
-        def done(libraries: list[dict[str, str]]) -> None:
-            self.refresh_library_names(libraries)
-            self.show_library_selector(
+        menu.add_separator()
+        menu.add_command(
+            label="全选",
+            command=lambda: self.set_all_library_menu_items(
+                True,
+                libraries,
+                flags,
                 selection_key,
                 variable,
                 display_var,
                 scope_var,
+            ),
+        )
+        menu.add_command(
+            label="清空选择",
+            command=lambda: self.set_all_library_menu_items(
+                False,
                 libraries,
-                current_ids,
-            )
+                flags,
+                selection_key,
+                variable,
+                display_var,
+                scope_var,
+            ),
+        )
 
-        self.run_job("正在读取 Emby 媒体库列表……", worker, done)
+        # Keep Tk variable wrappers alive for the lifetime of this posted menu.
+        menu._library_flags = flags  # type: ignore[attr-defined]
 
-    def show_library_selector(
+    def set_all_library_menu_items(
         self,
+        selected: bool,
+        libraries: list[dict[str, str]],
+        flags: dict[str, tk.BooleanVar],
         selection_key: str,
         variable: tk.StringVar,
         display_var: tk.StringVar,
         scope_var: tk.StringVar,
-        libraries: list[dict[str, str]],
-        current_ids: set[str],
     ) -> None:
-        if not libraries:
-            messagebox.showwarning(APP_TITLE, "Emby 没有返回可选择的媒体库。")
-            return
-
-        dialog = tk.Toplevel(self.root)
-        dialog.title("选择媒体库")
-        dialog.transient(self.root)
-        dialog.resizable(True, True)
-        dialog.minsize(420, 320)
-
-        ttk.Label(
-            dialog,
-            text="单击可单选；按住 Ctrl 或 Shift 可多选媒体库。",
-            padding=(12, 12, 12, 6),
-        ).pack(fill="x")
-
-        wrap = ttk.Frame(dialog, padding=(12, 0, 12, 8))
-        wrap.pack(fill="both", expand=True)
-        listbox = tk.Listbox(
-            wrap,
-            selectmode=tk.EXTENDED,
-            exportselection=False,
-            activestyle="dotbox",
+        for flag in flags.values():
+            flag.set(selected)
+        self.apply_library_menu_selection(
+            libraries,
+            flags,
+            selection_key,
+            variable,
+            display_var,
+            scope_var,
         )
-        scrollbar = ttk.Scrollbar(wrap, orient="vertical", command=listbox.yview)
-        listbox.configure(yscrollcommand=scrollbar.set)
-        listbox.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
 
-        for index, item in enumerate(libraries):
-            listbox.insert("end", item["Name"])
-            if item["Id"] in current_ids:
-                listbox.selection_set(index)
-        if listbox.curselection():
-            listbox.see(listbox.curselection()[0])
+    def apply_library_menu_selection(
+        self,
+        libraries: list[dict[str, str]],
+        flags: dict[str, tk.BooleanVar],
+        selection_key: str,
+        variable: tk.StringVar,
+        display_var: tk.StringVar,
+        scope_var: tk.StringVar,
+    ) -> None:
+        selected = [
+            item
+            for item in libraries
+            if flags.get(str(item["Id"])) is not None
+            and flags[str(item["Id"])].get()
+        ]
+        variable.set(",".join(str(item["Id"]) for item in selected))
 
-        buttons = ttk.Frame(dialog, padding=(12, 0, 12, 12))
-        buttons.pack(fill="x")
+        name_map = self.library_name_maps.setdefault(selection_key, {})
+        for item in libraries:
+            name_map[str(item["Id"])] = str(item["Name"])
 
-        def select_all() -> None:
-            listbox.selection_set(0, "end")
-
-        def clear_all() -> None:
-            listbox.selection_clear(0, "end")
-
-        def confirm() -> None:
-            indexes = list(listbox.curselection())
-            if not indexes:
-                messagebox.showwarning(APP_TITLE, "请至少选择一个媒体库。", parent=dialog)
-                return
-            selected = [libraries[index] for index in indexes]
-            variable.set(",".join(item["Id"] for item in selected))
-            name_map = self.library_name_maps.setdefault(selection_key, {})
-            for item in selected:
-                name_map[item["Id"]] = item["Name"]
-            display_var.set("、".join(item["Name"] for item in selected))
-            scope_var.set("selected")
-            self.save_all_settings(show_message=False)
-            dialog.destroy()
-
-        ttk.Button(buttons, text="全选", command=select_all).pack(side="left")
-        ttk.Button(buttons, text="清空", command=clear_all).pack(side="left", padx=(6, 0))
-        ttk.Button(buttons, text="取消", command=dialog.destroy).pack(side="right")
-        ttk.Button(buttons, text="确定", command=confirm).pack(side="right", padx=(0, 6))
-
-        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
-        dialog.grab_set()
-        dialog.focus_set()
+        display_var.set(
+            "、".join(str(item["Name"]) for item in selected)
+            if selected
+            else "尚未选择"
+        )
+        scope_var.set("selected")
+        self.save_all_settings(show_message=False)
 
     def make_tree(self, parent: ttk.Frame, columns: list[tuple[str, str, int]]) -> ttk.Treeview:
         wrap = ttk.Frame(parent)
