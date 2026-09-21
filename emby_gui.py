@@ -190,7 +190,7 @@ def export_missing_csv(rows: list[dict[str, Any]]) -> Path:
     return export_rows_csv(
         "emby_movies_without_actors",
         [
-            ("媒体库 ID", "LibraryId"),
+            ("媒体库", "LibraryId"),
             ("Item ID", "Id"),
             ("影片", "Name"),
             ("文件路径", "Path"),
