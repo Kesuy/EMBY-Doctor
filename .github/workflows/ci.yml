@@ -16,8 +16,8 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Run unit tests
@@ -30,8 +30,8 @@ jobs:
   windows-exe:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Install PyInstaller
@@ -52,7 +52,7 @@ jobs:
           $p = Start-Process -FilePath .\dist\EmbyMediaLibraryBatchProcessor.exe -ArgumentList '--version' -Wait -PassThru
           if ($p.ExitCode -ne 0) { exit $p.ExitCode }
       - name: Upload EXE artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: EmbyMediaLibraryBatchProcessor-Windows
           path: dist/EmbyMediaLibraryBatchProcessor.exe
