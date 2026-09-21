@@ -9,7 +9,13 @@ from emby_gui import APP_TITLE, export_actor_csv, media_directory
 
 class ActorTabMixin:
     def build_actor_tab(self) -> None:
-        controls = self.top_controls(self.actor_tab, self.actor_lib_var, self.actor_scope_var)
+        controls = self.top_controls(
+            self.actor_tab,
+            "delete_actor_images",
+            self.actor_lib_var,
+            self.actor_lib_name_var,
+            self.actor_scope_var,
+        )
         b_scan = ttk.Button(controls, text="扫描预览", command=self.scan_actor_images)
         b_scan.pack(side="left", padx=3)
         b_exec = ttk.Button(controls, text="执行删除", command=self.execute_actor_images)
