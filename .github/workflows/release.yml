@@ -35,7 +35,7 @@ jobs:
       - name: Smoke test EXE
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath .\dist\EmbyMediaLibraryBatchProcessor.exe -ArgumentList '--version' -Wait -PassThru
+          $p = Start-Process -FilePath .\dist\EMBY-Doctor.exe -ArgumentList '--version' -Wait -PassThru
           if ($p.ExitCode -ne 0) { exit $p.ExitCode }
       - uses: actions/upload-artifact@v6
         with:
