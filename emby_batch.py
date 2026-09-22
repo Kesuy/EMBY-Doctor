@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""Emby Media Library Batch Processor.
+"""EMBY Doctor.
 
 Batch utilities for selected Emby libraries:
 1. Delete Primary images for actors appearing in the selected libraries.
@@ -65,7 +65,7 @@ class EmbyClient:
         headers = {
             "X-Emby-Token": self.api_key,
             "Accept": "application/json",
-            "User-Agent": f"EmbyMediaLibraryBatchProcessor/{__version__}",
+            "User-Agent": f"EMBY-Doctor/{__version__}",
         }
         if data is not None:
             body = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -460,8 +460,8 @@ def add_connection_args(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="emby-batch",
-        description="Emby Media Library Batch Processor",
+        prog="emby-doctor",
+        description="EMBY Doctor",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command")
@@ -488,7 +488,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def interactive_args(parser: argparse.ArgumentParser) -> list[str]:
-    print("Emby Media Library Batch Processor")
+    print("EMBY Doctor")
     print("1. 删除指定媒体库演员头像")
     print("2. 扫描没有演员信息的影片")
     print("3. 删除指定媒体库影片导演信息")
