@@ -1,7 +1,7 @@
 [project]
-name = "emby-media-library-batch-processor"
+name = "emby-doctor"
 version = "1.3.0"
-description = "Desktop and CLI batch utilities for selected Emby media libraries"
+description = "EMBY Doctor desktop and CLI maintenance utilities for Emby media libraries"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -14,8 +14,8 @@ classifiers = [
 ]
 
 [project.scripts]
-emby-batch = "emby_batch:main"
-emby-batch-gui = "emby_gui:main"
+emby-doctor = "emby_batch:main"
+emby-doctor-gui = "emby_gui:main"
 
 [build-system]
 requires = ["setuptools>=68"]
