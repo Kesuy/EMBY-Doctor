@@ -1,6 +1,6 @@
-# Emby Media Library Batch Processor
+# EMBY Doctor
 
-**Emby 媒体库批处理** 是一个面向 Emby 的 Windows 桌面批处理工具，用于对指定媒体库执行常见的元数据清理与检查操作。
+**EMBY Doctor** 是一个面向 Emby 的 Windows 桌面维护与批处理工具，用于对指定媒体库执行常见的元数据清理与检查操作。
 
 首个版本集成三个功能：
 
@@ -27,7 +27,7 @@
 Windows EXE 运行时，所有设置保存在 **EXE 同目录**：
 
 ```text
-EmbyMediaLibraryBatchProcessor.exe
+EMBY-Doctor.exe
 settings.json
 backups/
 reports/
@@ -98,11 +98,11 @@ magick -background none assets/emby.svg -define icon:auto-resize=256,128,64,48,4
 pyinstaller --clean --noconfirm --onefile --windowed `
   --icon assets/emby.ico `
   --add-data "assets/emby.png;assets" `
-  --name EmbyMediaLibraryBatchProcessor `
+  --name EMBY-Doctor `
   emby_gui.py
 ```
 
-项目的 GitHub Actions 会在 PR / main 上自动运行测试并构建 Windows EXE artifact；推送 `v*` tag 时自动生成 GitHub Release。
+项目的 GitHub Actions 会在 PR / main 上自动运行测试并构建 `EMBY-Doctor-Windows` EXE artifact；推送 `v*` tag 时自动生成 GitHub Release。
 
 ## License
 
