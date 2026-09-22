@@ -50,6 +50,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         self.action_buttons: list[Any] = []
         self.scope_sync_callbacks: list[Callable[[], None]] = []
         self.library_dropdown_popup: tk.Toplevel | None = None
+        self.library_dropdown_root_click_bind: str | None = None
 
         self.url_var = tk.StringVar(value=str(self.settings["connection"].get("url") or ""))
         self.api_key_var = tk.StringVar(value=str(self.settings["connection"].get("api_key") or ""))
@@ -337,12 +338,15 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
     def close_library_dropdown(self) -> None:
         popup = self.library_dropdown_popup
         self.library_dropdown_popup = None
+        bind_id = self.library_dropdown_root_click_bind
+        self.library_dropdown_root_click_bind = None
+        if bind_id:
+            try:
+                self.root.unbind("<Button-1>", bind_id)
+            except Exception:
+                pass
         if popup is None:
             return
-        try:
-            popup.grab_release()
-        except Exception:
-            pass
         try:
             popup.destroy()
         except Exception:
@@ -382,56 +386,142 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         shell = tk.Frame(
             popup,
             background="#ffffff",
-            highlightbackground="#d6d6db",
+            highlightbackground="#d9dde3",
             highlightthickness=1,
             bd=0,
         )
         shell.pack(fill="both", expand=True)
 
         body = tk.Frame(shell, background="#ffffff")
-        body.pack(fill="both", expand=True, padx=8, pady=(8, 5))
+        body.pack(fill="both", expand=True, padx=10, pady=(9, 6))
 
         flags: dict[str, tk.BooleanVar] = {}
+
+        def draw_checkbox(canvas: tk.Canvas, checked: bool) -> None:
+            canvas.delete("all")
+            if checked:
+                canvas.create_rectangle(
+                    2, 2, 16, 16,
+                    outline="#2563eb",
+                    fill="#2563eb",
+                    width=1,
+                )
+                canvas.create_line(
+                    5, 9, 8, 12, 13, 6,
+                    fill="#ffffff",
+                    width=2,
+                    capstyle="round",
+                    joinstyle="round",
+                )
+            else:
+                canvas.create_rectangle(
+                    2, 2, 16, 16,
+                    outline="#b8bec7",
+                    fill="#ffffff",
+                    width=1,
+                )
+
         for item in libraries:
             library_id = str(item["Id"])
             library_name = str(item["Name"])
             self.library_name_maps.setdefault(selection_key, {})[library_id] = library_name
             flag = tk.BooleanVar(value=library_id in current_ids)
             flags[library_id] = flag
-            tk.Checkbutton(
-                body,
-                text=library_name,
-                variable=flag,
-                anchor="w",
-                justify="left",
+
+            row = tk.Frame(body, background="#ffffff", bd=0, highlightthickness=0)
+            row.pack(fill="x", pady=1)
+
+            box = tk.Canvas(
+                row,
+                width=18,
+                height=18,
                 background="#ffffff",
-                activebackground="#ffffff",
-                foreground="#222222",
-                activeforeground="#222222",
-                selectcolor="#ffffff",
                 highlightthickness=0,
                 bd=0,
-                relief="flat",
-                padx=2,
-                pady=2,
-                command=lambda: self.apply_library_checkbox_selection(
+            )
+            box.pack(side="left", padx=(2, 8), pady=4)
+
+            label = tk.Label(
+                row,
+                text=library_name,
+                background="#ffffff",
+                foreground="#222222",
+                anchor="w",
+                bd=0,
+                padx=0,
+                pady=0,
+            )
+            label.pack(side="left", fill="x", expand=True, pady=4)
+
+            def refresh_box(
+                *_args: Any,
+                current_box: tk.Canvas = box,
+                current_flag: tk.BooleanVar = flag,
+            ) -> None:
+                draw_checkbox(current_box, bool(current_flag.get()))
+
+            flag.trace_add("write", refresh_box)
+            refresh_box()
+
+            def set_hover(
+                active: bool,
+                current_row: tk.Frame = row,
+                current_box: tk.Canvas = box,
+                current_label: tk.Label = label,
+            ) -> None:
+                bg = "#f7f8fa" if active else "#ffffff"
+                current_row.configure(background=bg)
+                current_box.configure(background=bg)
+                current_label.configure(background=bg)
+
+            def toggle_item(
+                _event: Any = None,
+                current_flag: tk.BooleanVar = flag,
+            ) -> str:
+                current_flag.set(not current_flag.get())
+                self.apply_library_checkbox_selection(
                     libraries,
                     flags,
                     selection_key,
                     variable,
                     display_var,
                     scope_var,
-                ),
-            ).pack(anchor="w", fill="x")
+                )
+                return "break"
 
-        tk.Frame(shell, background="#e5e5e5", height=1).pack(fill="x", padx=8, pady=(4, 5))
-        footer = tk.Frame(shell, background="#ffffff")
-        footer.pack(fill="x", padx=8, pady=(0, 7))
-        ttk.Button(
+            for widget in (row, box, label):
+                widget.bind("<Button-1>", toggle_item)
+                widget.bind("<Enter>", lambda _e, r=row, b=box, l=label: set_hover(True, r, b, l))
+                widget.bind("<Leave>", lambda _e, r=row, b=box, l=label: set_hover(False, r, b, l))
+
+        tk.Frame(shell, background="#e5e7eb", height=1, bd=0).pack(fill="x", padx=10, pady=(2, 0))
+
+        footer = tk.Frame(shell, background="#ffffff", bd=0)
+        footer.pack(fill="x", padx=10, pady=8)
+
+        def flat_button(parent: tk.Widget, text: str, command: Callable[[], None]) -> tk.Button:
+            return tk.Button(
+                parent,
+                text=text,
+                command=command,
+                background="#ffffff",
+                activebackground="#f3f4f6",
+                foreground="#222222",
+                activeforeground="#222222",
+                relief="flat",
+                bd=0,
+                highlightthickness=1,
+                highlightbackground="#d9dde3",
+                highlightcolor="#c7cdd6",
+                padx=12,
+                pady=3,
+                cursor="hand2",
+            )
+
+        flat_button(
             footer,
-            text="全选",
-            width=7,
-            command=lambda: self.set_all_library_checkboxes(
+            "全选",
+            lambda: self.set_all_library_checkboxes(
                 True,
                 libraries,
                 flags,
@@ -441,11 +531,11 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
                 scope_var,
             ),
         ).pack(side="left")
-        ttk.Button(
+
+        flat_button(
             footer,
-            text="清空",
-            width=7,
-            command=lambda: self.set_all_library_checkboxes(
+            "清空",
+            lambda: self.set_all_library_checkboxes(
                 False,
                 libraries,
                 flags,
@@ -454,11 +544,16 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
                 display_var,
                 scope_var,
             ),
-        ).pack(side="left", padx=(6, 0))
-        ttk.Button(footer, text="完成", width=7, command=self.close_library_dropdown).pack(side="right")
+        ).pack(side="left", padx=(7, 0))
+
+        flat_button(
+            footer,
+            "完成",
+            self.close_library_dropdown,
+        ).pack(side="right")
 
         popup.update_idletasks()
-        width = max(anchor.winfo_width(), popup.winfo_reqwidth(), 300)
+        width = max(280, min(anchor.winfo_width(), 340))
         height = popup.winfo_reqheight()
         x = anchor.winfo_rootx()
         y = anchor.winfo_rooty() + anchor.winfo_height() + 2
@@ -472,6 +567,16 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         popup.lift()
         popup.focus_force()
         popup.bind("<Escape>", lambda _event: self.close_library_dropdown())
+
+        def close_on_root_click(_event: tk.Event) -> None:
+            if self.library_dropdown_popup is popup:
+                self.root.after_idle(self.close_library_dropdown)
+
+        self.library_dropdown_root_click_bind = self.root.bind(
+            "<Button-1>",
+            close_on_root_click,
+            add="+",
+        )
 
         # Keep Tk variable wrappers alive while the popup is open.
         popup._library_flags = flags  # type: ignore[attr-defined]
