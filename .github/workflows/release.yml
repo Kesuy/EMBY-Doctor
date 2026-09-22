@@ -14,8 +14,8 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Run tests
@@ -31,30 +31,30 @@ jobs:
           magick -background none assets/emby.svg -define icon:auto-resize=256,128,64,48,40,32,24,20,16 assets/emby.ico
           magick identify assets/emby.ico
       - name: Build GUI EXE
-        run: pyinstaller --clean --noconfirm --onefile --windowed --icon assets/emby.ico --add-data "assets/emby.png;assets" --name EmbyMediaLibraryBatchProcessor emby_gui.py
+        run: pyinstaller --clean --noconfirm --onefile --windowed --icon assets/emby.ico --add-data "assets/emby.png;assets" --name EMBY-Doctor emby_gui.py
       - name: Smoke test EXE
         shell: pwsh
         run: |
           $p = Start-Process -FilePath .\dist\EmbyMediaLibraryBatchProcessor.exe -ArgumentList '--version' -Wait -PassThru
           if ($p.ExitCode -ne 0) { exit $p.ExitCode }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
-          name: EmbyMediaLibraryBatchProcessor-Windows
-          path: dist/EmbyMediaLibraryBatchProcessor.exe
+          name: EMBY-Doctor-Windows
+          path: dist/EMBY-Doctor.exe
           if-no-files-found: error
 
   publish:
     needs: build-windows
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
-          name: EmbyMediaLibraryBatchProcessor-Windows
+          name: EMBY-Doctor-Windows
           path: release-assets
       - name: Prepare release assets
         run: |
           mkdir out
-          cp release-assets/EmbyMediaLibraryBatchProcessor.exe out/EmbyMediaLibraryBatchProcessor-Windows.exe
+          cp release-assets/EMBY-Doctor.exe out/EMBY-Doctor-Windows.exe
           sha256sum out/* > out/SHA256SUMS.txt
       - name: Resolve release tag
         shell: bash
@@ -71,5 +71,5 @@ jobs:
           gh release create "${RELEASE_TAG}" out/* \
             --repo "${GITHUB_REPOSITORY}" \
             --target "${GITHUB_SHA}" \
-            --title "Emby Media Library Batch Processor ${RELEASE_TAG}" \
+            --title "EMBY Doctor ${RELEASE_TAG}" \
             --generate-notes
