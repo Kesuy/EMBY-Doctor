@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""GUI entry and local persistence helpers for Emby Media Library Batch Processor."""
+"""GUI entry and local persistence helpers for EMBY Doctor."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from typing import Any
 
 from emby_batch import __version__, timestamp
 
-APP_TITLE = "Emby 媒体库批处理"
+APP_TITLE = "EMBY Doctor"
 SETTINGS_FILE = "settings.json"
 
 
@@ -233,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if "--version" in args or "-V" in args:
         if sys.stdout is not None:
-            print(f"Emby Media Library Batch Processor {__version__}")
+            print(f"EMBY Doctor {__version__}")
         return 0
 
     try:
