@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Renamed the project and application from **Emby Media Library Batch Processor** to **EMBY Doctor**.
+- Renamed Windows EXE / CI artifacts to `EMBY-Doctor` / `EMBY-Doctor-Windows`.
+- Updated GUI, CLI, package metadata, User-Agent, README, CI and Release branding.
+
 ## v1.3.0
 
 - Added click-to-sort support to all result-list columns, with ascending/descending indicators.
