@@ -45,7 +45,7 @@ jobs:
           magick -background none assets/emby.svg -define icon:auto-resize=256,128,64,48,40,32,24,20,16 assets/emby.ico
           magick identify assets/emby.ico
       - name: Build GUI EXE
-        run: pyinstaller --clean --noconfirm --onefile --windowed --icon assets/emby.ico --add-data "assets/emby.png;assets" --name EmbyMediaLibraryBatchProcessor emby_gui.py
+        run: pyinstaller --clean --noconfirm --onefile --windowed --icon assets/emby.ico --add-data "assets/emby.png;assets" --name EMBY-Doctor emby_gui.py
       - name: Smoke test EXE
         shell: pwsh
         run: |
@@ -54,6 +54,6 @@ jobs:
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v6
         with:
-          name: EmbyMediaLibraryBatchProcessor-Windows
-          path: dist/EmbyMediaLibraryBatchProcessor.exe
+          name: EMBY-Doctor-Windows
+          path: dist/EMBY-Doctor.exe
           if-no-files-found: error
