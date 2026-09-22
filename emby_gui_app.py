@@ -398,10 +398,22 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
             self.library_name_maps.setdefault(selection_key, {})[library_id] = library_name
             flag = tk.BooleanVar(value=library_id in current_ids)
             flags[library_id] = flag
-            ttk.Checkbutton(
+            tk.Checkbutton(
                 body,
                 text=library_name,
                 variable=flag,
+                anchor="w",
+                justify="left",
+                background="#ffffff",
+                activebackground="#ffffff",
+                foreground="#222222",
+                activeforeground="#222222",
+                selectcolor="#ffffff",
+                highlightthickness=0,
+                bd=0,
+                relief="flat",
+                padx=2,
+                pady=2,
                 command=lambda: self.apply_library_checkbox_selection(
                     libraries,
                     flags,
@@ -410,10 +422,10 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
                     display_var,
                     scope_var,
                 ),
-            ).pack(anchor="w", fill="x", pady=2)
+            ).pack(anchor="w", fill="x")
 
-        ttk.Separator(shell).pack(fill="x", padx=8, pady=(2, 4))
-        footer = ttk.Frame(shell)
+        tk.Frame(shell, background="#e5e5e5", height=1).pack(fill="x", padx=8, pady=(4, 5))
+        footer = tk.Frame(shell, background="#ffffff")
         footer.pack(fill="x", padx=8, pady=(0, 7))
         ttk.Button(
             footer,
