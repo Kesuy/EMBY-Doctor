@@ -87,9 +87,10 @@ class EmbyBatchApp(
         paths = self.settings["paths"]
         self.actor_lib_var = tk.StringVar(value=str(libs.get("delete_actor_images") or ""))
         self.missing_lib_var = tk.StringVar(value=str(libs.get("scan_missing_actors") or ""))
+        self.people_lib_var = tk.StringVar(value=str(libs.get("people_quality") or ""))
         self.director_lib_var = tk.StringVar(value=str(libs.get("delete_directors") or ""))
         self.library_name_maps: dict[str, dict[str, str]] = {}
-        for key in ("delete_actor_images", "scan_missing_actors", "delete_directors"):
+        for key in ("delete_actor_images", "scan_missing_actors", "people_quality", "delete_directors"):
             raw_names = library_names.get(key) if isinstance(library_names, dict) else {}
             if not isinstance(raw_names, dict):
                 raw_names = {}
@@ -104,11 +105,15 @@ class EmbyBatchApp(
         self.missing_lib_name_var = tk.StringVar(
             value=self.library_selection_text("scan_missing_actors", self.missing_lib_var.get())
         )
+        self.people_lib_name_var = tk.StringVar(
+            value=self.library_selection_text("people_quality", self.people_lib_var.get())
+        )
         self.director_lib_name_var = tk.StringVar(
             value=self.library_selection_text("delete_directors", self.director_lib_var.get())
         )
         self.actor_scope_var = tk.StringVar(value=self.normalize_scope(scopes.get("delete_actor_images")))
         self.missing_scope_var = tk.StringVar(value=self.normalize_scope(scopes.get("scan_missing_actors")))
+        self.people_scope_var = tk.StringVar(value=self.normalize_scope(scopes.get("people_quality")))
         self.director_scope_var = tk.StringVar(value=self.normalize_scope(scopes.get("delete_directors")))
         self.include_video_var = tk.BooleanVar(
             value=bool(self.settings["scan_missing_actors"].get("include_video", False))
@@ -651,6 +656,7 @@ class EmbyBatchApp(
             {
                 "delete_actor_images": self.actor_lib_var.get(),
                 "scan_missing_actors": self.missing_lib_var.get(),
+                "people_quality": self.people_lib_var.get(),
                 "delete_directors": self.director_lib_var.get(),
             }.get(selection_key, "")
         ])
@@ -668,6 +674,7 @@ class EmbyBatchApp(
         bindings = (
             ("delete_actor_images", self.actor_lib_var, self.actor_lib_name_var),
             ("scan_missing_actors", self.missing_lib_var, self.missing_lib_name_var),
+            ("people_quality", self.people_lib_var, self.people_lib_name_var),
             ("delete_directors", self.director_lib_var, self.director_lib_name_var),
         )
         for selection_key, variable, display_var in bindings:
@@ -1123,6 +1130,7 @@ class EmbyBatchApp(
             "libraries": {
                 "delete_actor_images": self.actor_lib_var.get().strip(),
                 "scan_missing_actors": self.missing_lib_var.get().strip(),
+                "people_quality": self.people_lib_var.get().strip(),
                 "delete_directors": self.director_lib_var.get().strip(),
             },
             "library_names": {
@@ -1131,6 +1139,7 @@ class EmbyBatchApp(
             "scopes": {
                 "delete_actor_images": self.normalize_scope(self.actor_scope_var.get()),
                 "scan_missing_actors": self.normalize_scope(self.missing_scope_var.get()),
+                "people_quality": self.normalize_scope(self.people_scope_var.get()),
                 "delete_directors": self.normalize_scope(self.director_scope_var.get()),
             },
             "scan_missing_actors": {"include_video": bool(self.include_video_var.get())},
