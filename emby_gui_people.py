@@ -23,6 +23,7 @@ from emby_gui_theme import (
     TEXT,
     WARNING,
     WARNING_SOFT,
+    AutoHideScrollbar,
 )
 from emby_people import (
     build_duplicate_candidates,
@@ -45,6 +46,7 @@ class PeopleQualityTabMixin:
         self.avatar_count_var = tk.StringVar(value="待处理 0 人")
         self.conflict_count_var = tk.StringVar(value="冲突 0 组")
         self.people_migration_hint_var = tk.StringVar(value="请选择候选人物进行比较。")
+        self.people_exact_name_only_var = tk.BooleanVar(value=False)
         self.people_subpage = "duplicate"
         self.people_subnav_buttons: dict[str, tk.Button] = {}
         self.people_subframes: dict[str, tk.Frame] = {}
@@ -82,6 +84,18 @@ class PeopleQualityTabMixin:
             padx=10,
             pady=5,
         ).pack(side="right")
+
+        scope_card = self.make_card(self.people_tab)
+        scope_card.pack(fill="x", pady=(0, 10))
+        scope_inner = tk.Frame(scope_card, background=CARD, bd=0)
+        scope_inner.pack(fill="x", padx=14, pady=10)
+        self.top_controls(
+            scope_inner,
+            "people_quality",
+            self.people_lib_var,
+            self.people_lib_name_var,
+            self.people_scope_var,
+        )
 
         tabs = self.make_card(self.people_tab)
         tabs.pack(fill="x", pady=(0, 10))
@@ -166,7 +180,14 @@ class PeopleQualityTabMixin:
             background=CARD,
             foreground=MUTED,
             font=("Microsoft YaHei UI", 9),
-        ).pack(side="left", padx=(12, 0))
+        ).pack(side="left", padx=(12, 12))
+        ttk.Checkbutton(
+            action,
+            text="仅名称完全相同",
+            style="Card.TCheckbutton",
+            variable=self.people_exact_name_only_var,
+            command=self.populate_people_audit_views,
+        ).pack(side="left")
         tk.Label(
             action,
             textvariable=self.duplicate_count_var,
@@ -218,7 +239,12 @@ class PeopleQualityTabMixin:
         self.duplicate_tree.heading("pair", text="人物")
         self.duplicate_tree.column("score", width=70, minwidth=64, anchor="center", stretch=False)
         self.duplicate_tree.column("pair", width=260, minwidth=180, anchor="w")
-        y = ttk.Scrollbar(tree_wrap, orient="vertical", command=self.duplicate_tree.yview)
+        y = AutoHideScrollbar(
+            tree_wrap,
+            orient="vertical",
+            command=self.duplicate_tree.yview,
+            style="Modern.Vertical.TScrollbar",
+        )
         self.duplicate_tree.configure(yscrollcommand=y.set)
         self.duplicate_tree.grid(row=0, column=0, sticky="nsew")
         y.grid(row=0, column=1, sticky="ns")
@@ -547,28 +573,42 @@ class PeopleQualityTabMixin:
         }
 
         def worker() -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
-            persons = list(client.query_people())
-            associations: dict[str, list[dict[str, Any]]] = {}
-            for movie in client.query_items(
-                None,
-                include_item_types="Movie,Video",
-                fields="People,Path",
-            ):
-                movie_id = str(movie.get("Id") or "")
-                if not movie_id:
-                    continue
-                entry = {
-                    "Id": movie_id,
-                    "Name": str(movie.get("Name") or movie_id),
-                    "Path": str(movie.get("Path") or ""),
-                }
-                for person in movie.get("People") or []:
-                    person_id = str(person.get("Id") or "").strip()
-                    if person_id:
-                        bucket = associations.setdefault(person_id, [])
-                        if not any(item["Id"] == movie_id for item in bucket):
-                            bucket.append(entry)
+            library_ids = self.scope_libraries(
+                self.people_scope_var.get(),
+                self.people_lib_var.get(),
+            )
 
+            person_map: dict[str, dict[str, Any]] = {}
+            associations: dict[str, list[dict[str, Any]]] = {}
+
+            for library_id in library_ids:
+                for person in client.query_people(library_id):
+                    person_id = str(person.get("Id") or "").strip()
+                    if person_id and person_id not in person_map:
+                        person_map[person_id] = person
+
+                for movie in client.query_items(
+                    library_id,
+                    include_item_types="Movie,Video",
+                    fields="People,Path",
+                ):
+                    movie_id = str(movie.get("Id") or "")
+                    if not movie_id:
+                        continue
+                    entry = {
+                        "Id": movie_id,
+                        "Name": str(movie.get("Name") or movie_id),
+                        "Path": str(movie.get("Path") or ""),
+                        "LibraryId": str(library_id or ""),
+                    }
+                    for person in movie.get("People") or []:
+                        person_id = str(person.get("Id") or "").strip()
+                        if person_id:
+                            bucket = associations.setdefault(person_id, [])
+                            if not any(item["Id"] == movie_id for item in bucket):
+                                bucket.append(entry)
+
+            persons = list(person_map.values())
             counts = {person_id: len(items) for person_id, items in associations.items()}
             candidates = build_duplicate_candidates(persons, counts)
             return persons, associations, candidates
@@ -600,7 +640,17 @@ class PeopleQualityTabMixin:
         for item in self.duplicate_tree.get_children():
             self.duplicate_tree.delete(item)
         self.people_candidate_by_iid.clear()
-        for index, candidate in enumerate(self.person_candidates):
+
+        visible_candidates = list(self.person_candidates)
+        if self.people_exact_name_only_var.get():
+            visible_candidates = [
+                candidate
+                for candidate in visible_candidates
+                if str(candidate["Left"].get("Name") or "").strip()
+                == str(candidate["Right"].get("Name") or "").strip()
+            ]
+
+        for index, candidate in enumerate(visible_candidates):
             iid = f"dup-{index}"
             left = candidate["Left"]
             right = candidate["Right"]
@@ -613,7 +663,12 @@ class PeopleQualityTabMixin:
             )
             self.people_candidate_by_iid[iid] = candidate
 
-        self.duplicate_count_var.set(f"候选 {len(self.person_candidates)} 组")
+        if self.people_exact_name_only_var.get():
+            self.duplicate_count_var.set(
+                f"候选 {len(visible_candidates)} / {len(self.person_candidates)} 组"
+            )
+        else:
+            self.duplicate_count_var.set(f"候选 {len(self.person_candidates)} 组")
 
         for item in self.avatar_tree.get_children():
             self.avatar_tree.delete(item)
@@ -662,8 +717,9 @@ class PeopleQualityTabMixin:
             )
         self.conflict_count_var.set(f"冲突 {len(conflicts)} 组")
 
-        if self.person_candidates:
-            first = self.duplicate_tree.get_children()[0]
+        visible_rows = self.duplicate_tree.get_children()
+        if visible_rows:
+            first = visible_rows[0]
             self.duplicate_tree.selection_set(first)
             self.duplicate_tree.focus(first)
             self.render_duplicate_candidate(self.people_candidate_by_iid[first])
@@ -694,6 +750,7 @@ class PeopleQualityTabMixin:
         self.dup_score_var.set("资料完整度：—")
         self.dup_provider_var.set("—")
         self.people_migration_hint_var.set("扫描完成后，可在此处比较重复 Person。")
+        self.migrate_button.configure(state="disabled", text="无可迁移关联")
         self._set_person_image_placeholder(self.keep_image_label)
         self._set_person_image_placeholder(self.dup_image_label)
 
@@ -731,10 +788,24 @@ class PeopleQualityTabMixin:
         conflict_text = ""
         if candidate.get("Conflicts"):
             conflict_text = f"；Provider 冲突：{'、'.join(candidate['Conflicts'])}"
-        self.people_migration_hint_var.set(
-            f"预计迁移 {right_assoc} 部关联影片{conflict_text}\n"
-            "迁移只修改影片 People 关联，不会自动删除右侧 Person 实体。"
-        )
+        if right_assoc > 0:
+            self.migrate_button.configure(
+                state="normal",
+                text="迁移右侧关联 → 保留左侧人物",
+            )
+            self.people_migration_hint_var.set(
+                f"预计迁移 {right_assoc} 部关联影片{conflict_text}\n"
+                "迁移只修改当前选择媒体库范围内的影片 People 关联，不会自动删除右侧 Person 实体。"
+            )
+        else:
+            self.migrate_button.configure(
+                state="disabled",
+                text="无可迁移关联",
+            )
+            self.people_migration_hint_var.set(
+                "右侧 Person 在当前媒体库范围内没有关联影片，因此没有可执行的迁移。\n"
+                "可交换保留方向，或调整上方媒体库范围后重新扫描。"
+            )
 
         self.people_image_generation += 1
         self.people_photo_refs.clear()
