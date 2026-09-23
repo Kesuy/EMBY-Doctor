@@ -248,6 +248,9 @@ class PeopleQualityTabMixin:
         self.duplicate_tree.configure(yscrollcommand=y.set)
         self.duplicate_tree.grid(row=0, column=0, sticky="nsew")
         y.grid(row=0, column=1, sticky="ns")
+        self.root.after_idle(
+            lambda current=y, current_tree=self.duplicate_tree: current.set(*current_tree.yview())
+        )
         tree_wrap.grid_rowconfigure(0, weight=1)
         tree_wrap.grid_columnconfigure(0, weight=1)
         self.duplicate_tree.bind("<<TreeviewSelect>>", self.on_duplicate_select)
