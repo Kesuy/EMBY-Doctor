@@ -18,6 +18,23 @@ from emby_gui import (
     settings_path,
 )
 
+from emby_gui_theme import (
+    BG,
+    SIDEBAR,
+    HEADER,
+    CARD,
+    BORDER,
+    TEXT,
+    MUTED,
+    PRIMARY,
+    PRIMARY_ACTIVE,
+    PRIMARY_SOFT,
+    SUCCESS,
+    WARNING,
+    DANGER,
+    apply_theme,
+)
+
 
 def tree_sort_key(value: Any) -> tuple[int, Any]:
     """Return a stable, user-friendly sort key for Treeview cell values."""
@@ -37,8 +54,8 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title(f"{APP_TITLE}  v{__version__}")
-        self.root.geometry("1100x720")
-        self.root.minsize(900, 600)
+        self.root.geometry("1380x840")
+        self.root.minsize(1160, 700)
         self.logo_image: tk.PhotoImage | None = None
         self.apply_branding()
 
@@ -92,6 +109,19 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         )
         self.directory_prefix_var = tk.StringVar(value=str(paths.get("directory_prefix") or ""))
         self.status_var = tk.StringVar(value=f"设置文件：{settings_path()}")
+        self.connection_status_var = tk.StringVar(value="未测试连接")
+        self.sidebar_status_var = tk.StringVar(value="就绪")
+        self.page_title_var = tk.StringVar(value="演员头像清理")
+        self.page_subtitle_var = tk.StringVar(
+            value="扫描指定媒体库中的演员头像，预览确认后再执行清理。"
+        )
+        self.actor_result_var = tk.StringVar(value="0 条")
+        self.missing_result_var = tk.StringVar(value="0 部")
+        self.director_result_var = tk.StringVar(value="0 部")
+        self.nav_buttons: dict[str, tk.Button] = {}
+        self.page_frames: dict[str, tk.Frame] = {}
+        self.current_page = "actor"
+        self.sidebar_logo: tk.PhotoImage | None = None
 
         self.build_ui()
         self.root.bind("<Configure>", self.on_root_configure, add="+")
@@ -106,67 +136,354 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
             self.logo_image = None
 
     def build_ui(self) -> None:
-        outer = ttk.Frame(self.root, padding=10)
-        outer.pack(fill="both", expand=True)
+        apply_theme(self.root)
 
-        conn = ttk.LabelFrame(outer, text="Emby 通用连接设置", padding=10)
-        conn.pack(fill="x")
-        conn.columnconfigure(1, weight=1)
-        conn.columnconfigure(3, weight=1)
+        shell = tk.Frame(self.root, background=BG, bd=0)
+        shell.pack(fill="both", expand=True)
 
-        ttk.Label(conn, text="Emby 地址").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=4)
-        ttk.Entry(conn, textvariable=self.url_var).grid(row=0, column=1, sticky="ew", pady=4)
-        ttk.Label(conn, text="API Key").grid(row=0, column=2, sticky="w", padx=(12, 6), pady=4)
-        self.api_entry = ttk.Entry(conn, textvariable=self.api_key_var, show="●")
-        self.api_entry.grid(row=0, column=3, sticky="ew", pady=4)
-
-        ttk.Checkbutton(
-            conn,
-            text="显示 API Key",
-            variable=self.show_key_var,
-            command=lambda: self.api_entry.configure(show="" if self.show_key_var.get() else "●"),
-        ).grid(row=1, column=0, sticky="w", pady=4)
-        ttk.Checkbutton(conn, text="校验 HTTPS 证书", variable=self.verify_ssl_var).grid(
-            row=1, column=1, sticky="w", pady=4
+        sidebar = tk.Frame(
+            shell,
+            background=SIDEBAR,
+            width=218,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=BORDER,
         )
-        ttk.Label(conn, text="超时(秒)").grid(row=1, column=2, sticky="e", padx=(12, 6), pady=4)
-        ttk.Entry(conn, textvariable=self.timeout_var, width=8).grid(row=1, column=3, sticky="w", pady=4)
+        sidebar.pack(side="left", fill="y")
+        sidebar.pack_propagate(False)
 
-        ttk.Label(conn, text="打开目录路径前缀").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=4)
-        ttk.Entry(conn, textvariable=self.directory_prefix_var).grid(
-            row=2, column=1, columnspan=3, sticky="ew", pady=4
+        brand = tk.Frame(sidebar, background=SIDEBAR, bd=0)
+        brand.pack(fill="x", padx=16, pady=(18, 18))
+        if self.logo_image is not None:
+            try:
+                width = max(1, int(self.logo_image.width()))
+                factor = max(1, (width + 31) // 32)
+                self.sidebar_logo = self.logo_image.subsample(factor, factor)
+            except Exception:
+                self.sidebar_logo = self.logo_image
+        if self.sidebar_logo is not None:
+            tk.Label(
+                brand,
+                image=self.sidebar_logo,
+                background=SIDEBAR,
+                bd=0,
+            ).pack(side="left", padx=(0, 10))
+        brand_text = tk.Frame(brand, background=SIDEBAR, bd=0)
+        brand_text.pack(side="left", fill="x", expand=True)
+        tk.Label(
+            brand_text,
+            text="EMBY Doctor",
+            background=SIDEBAR,
+            foreground=TEXT,
+            font=("Microsoft YaHei UI", 14, "bold"),
+            anchor="w",
+        ).pack(fill="x")
+        tk.Label(
+            brand_text,
+            text="Emby 媒体库维护工具",
+            background=SIDEBAR,
+            foreground=MUTED,
+            font=("Microsoft YaHei UI", 8),
+            anchor="w",
+        ).pack(fill="x", pady=(2, 0))
+
+        tk.Label(
+            sidebar,
+            text="功能导航",
+            background=SIDEBAR,
+            foreground="#8A97A8",
+            font=("Microsoft YaHei UI", 8),
+            anchor="w",
+        ).pack(fill="x", padx=18, pady=(2, 6))
+
+        self._build_nav_button(sidebar, "actor", "演员头像清理")
+        self._build_nav_button(sidebar, "missing", "无演员影片扫描")
+        self._build_nav_button(sidebar, "director", "导演信息清理")
+
+        tk.Label(
+            sidebar,
+            text="系统状态",
+            background=SIDEBAR,
+            foreground="#8A97A8",
+            font=("Microsoft YaHei UI", 8),
+            anchor="w",
+        ).pack(fill="x", padx=18, pady=(22, 6))
+
+        status_card = tk.Frame(
+            sidebar,
+            background="#FFFFFF",
+            highlightbackground=BORDER,
+            highlightthickness=1,
+            bd=0,
         )
+        status_card.pack(fill="x", padx=12, pady=(0, 10))
+        tk.Label(
+            status_card,
+            text="●",
+            background="#FFFFFF",
+            foreground=SUCCESS,
+            font=("Microsoft YaHei UI", 9),
+        ).grid(row=0, column=0, padx=(10, 5), pady=(10, 3), sticky="w")
+        tk.Label(
+            status_card,
+            textvariable=self.sidebar_status_var,
+            background="#FFFFFF",
+            foreground=TEXT,
+            font=("Microsoft YaHei UI", 9, "bold"),
+            anchor="w",
+        ).grid(row=0, column=1, padx=(0, 10), pady=(10, 3), sticky="w")
+        tk.Label(
+            status_card,
+            textvariable=self.connection_status_var,
+            background="#FFFFFF",
+            foreground=MUTED,
+            font=("Microsoft YaHei UI", 8),
+            anchor="w",
+            justify="left",
+            wraplength=170,
+        ).grid(row=1, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="w")
+
+        sidebar_footer = tk.Frame(sidebar, background=SIDEBAR, bd=0)
+        sidebar_footer.pack(side="bottom", fill="x", padx=16, pady=14)
+        tk.Label(
+            sidebar_footer,
+            text=f"版本 v{__version__}",
+            background=SIDEBAR,
+            foreground="#94A0AF",
+            font=("Microsoft YaHei UI", 8),
+            anchor="w",
+        ).pack(fill="x")
+
+        content_area = tk.Frame(shell, background=BG, bd=0)
+        content_area.pack(side="left", fill="both", expand=True)
+
+        header = tk.Frame(
+            content_area,
+            background=HEADER,
+            height=88,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+        )
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        header_left = tk.Frame(header, background=HEADER, bd=0)
+        header_left.pack(side="left", fill="both", expand=True, padx=20, pady=14)
         ttk.Label(
-            conn,
-            text=r"可选，例如 \\192.168.1.10；打开结果目录时会补全为 \\192.168.1.10\结果路径",
-        ).grid(row=3, column=1, columnspan=3, sticky="w", pady=(0, 4))
-
-        btns = ttk.Frame(conn)
-        btns.grid(row=4, column=0, columnspan=4, sticky="e", pady=(8, 0))
-        b_test = ttk.Button(btns, text="测试连接", command=self.test_connection)
-        b_test.pack(side="left", padx=4)
-        b_save = ttk.Button(btns, text="保存设置", command=self.save_all_settings)
-        b_save.pack(side="left", padx=4)
-        self.action_buttons.extend([b_test, b_save])
-
+            header_left,
+            textvariable=self.page_title_var,
+            style="PageTitle.TLabel",
+        ).pack(anchor="w")
         ttk.Label(
-            outer,
-            text="提示：settings.json 会保存在 EXE 同目录，并包含 API Key 明文。请勿将该文件上传或分享。",
-        ).pack(fill="x", pady=(6, 4))
+            header_left,
+            textvariable=self.page_subtitle_var,
+            style="PageSubtitle.TLabel",
+        ).pack(anchor="w", pady=(4, 0))
 
-        notebook = ttk.Notebook(outer)
-        notebook.pack(fill="both", expand=True, pady=(4, 6))
-        self.actor_tab = ttk.Frame(notebook, padding=10)
-        self.missing_tab = ttk.Frame(notebook, padding=10)
-        self.director_tab = ttk.Frame(notebook, padding=10)
-        notebook.add(self.actor_tab, text="删除演员头像")
-        notebook.add(self.missing_tab, text="扫描无演员影片")
-        notebook.add(self.director_tab, text="删除导演信息")
+        header_right = tk.Frame(header, background=HEADER, bd=0)
+        header_right.pack(side="right", padx=20)
+        tk.Label(
+            header_right,
+            text=f"v{__version__}",
+            background=PRIMARY_SOFT,
+            foreground=PRIMARY,
+            font=("Microsoft YaHei UI", 9, "bold"),
+            padx=10,
+            pady=4,
+        ).pack(side="right")
+
+        status_bar = tk.Frame(
+            content_area,
+            background=HEADER,
+            height=30,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+        )
+        status_bar.pack(side="bottom", fill="x")
+        ttk.Label(
+            status_bar,
+            textvariable=self.status_var,
+            style="Status.TLabel",
+            anchor="w",
+        ).pack(side="left", fill="x", expand=True, padx=14, pady=5)
+        ttk.Label(
+            status_bar,
+            text=f"EMBY Doctor · {settings_path().name}",
+            style="Status.TLabel",
+        ).pack(side="right", padx=14, pady=5)
+
+        body = tk.Frame(content_area, background=BG, bd=0)
+        body.pack(fill="both", expand=True, padx=16, pady=14)
+
+        connection_card = self._build_connection_card(body)
+        connection_card.pack(fill="x", pady=(0, 12))
+
+        page_host = tk.Frame(body, background=BG, bd=0)
+        page_host.pack(fill="both", expand=True)
+        page_host.grid_rowconfigure(0, weight=1)
+        page_host.grid_columnconfigure(0, weight=1)
+
+        self.actor_tab = tk.Frame(page_host, background=BG, bd=0)
+        self.missing_tab = tk.Frame(page_host, background=BG, bd=0)
+        self.director_tab = tk.Frame(page_host, background=BG, bd=0)
+        self.page_frames = {
+            "actor": self.actor_tab,
+            "missing": self.missing_tab,
+            "director": self.director_tab,
+        }
+        for frame in self.page_frames.values():
+            frame.grid(row=0, column=0, sticky="nsew")
 
         self.build_actor_tab()
         self.build_missing_tab()
         self.build_director_tab()
-        ttk.Label(outer, textvariable=self.status_var, anchor="w").pack(fill="x")
+        self.refresh_result_counts()
+        self.show_page("actor")
+
+    def make_card(self, parent: tk.Widget) -> tk.Frame:
+        return tk.Frame(
+            parent,
+            background=CARD,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+        )
+
+    def _build_connection_card(self, parent: tk.Widget) -> tk.Frame:
+        card = self.make_card(parent)
+        inner = ttk.Frame(card, style="Card.TFrame", padding=(14, 10))
+        inner.pack(fill="both", expand=True)
+
+        head = ttk.Frame(inner, style="Card.TFrame")
+        head.pack(fill="x", pady=(0, 9))
+        ttk.Label(head, text="Emby 连接", style="Section.TLabel").pack(side="left")
+        tk.Label(
+            head,
+            textvariable=self.connection_status_var,
+            background="#F3F7FD",
+            foreground=MUTED,
+            font=("Microsoft YaHei UI", 8),
+            padx=9,
+            pady=3,
+        ).pack(side="right")
+
+        row = ttk.Frame(inner, style="Card.TFrame")
+        row.pack(fill="x")
+        row.columnconfigure(0, weight=4)
+        row.columnconfigure(1, weight=4)
+        row.columnconfigure(2, weight=1)
+        row.columnconfigure(3, weight=0)
+
+        address = ttk.Frame(row, style="Card.TFrame")
+        address.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        ttk.Label(address, text="服务器地址", style="Muted.TLabel").pack(anchor="w", pady=(0, 3))
+        ttk.Entry(address, textvariable=self.url_var).pack(fill="x")
+
+        api = ttk.Frame(row, style="Card.TFrame")
+        api.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+        ttk.Label(api, text="API Key", style="Muted.TLabel").pack(anchor="w", pady=(0, 3))
+        self.api_entry = ttk.Entry(api, textvariable=self.api_key_var, show="●")
+        self.api_entry.pack(fill="x")
+
+        timeout = ttk.Frame(row, style="Card.TFrame")
+        timeout.grid(row=0, column=2, sticky="ew", padx=(0, 8))
+        ttk.Label(timeout, text="超时(秒)", style="Muted.TLabel").pack(anchor="w", pady=(0, 3))
+        ttk.Entry(timeout, textvariable=self.timeout_var, width=8).pack(fill="x")
+
+        actions = ttk.Frame(row, style="Card.TFrame")
+        actions.grid(row=0, column=3, sticky="se")
+        b_test = ttk.Button(actions, text="测试连接", style="Primary.TButton", command=self.test_connection)
+        b_test.pack(side="left", padx=(0, 6))
+        b_save = ttk.Button(actions, text="保存设置", style="Secondary.TButton", command=self.save_all_settings)
+        b_save.pack(side="left")
+        self.action_buttons.extend([b_test, b_save])
+
+        options = ttk.Frame(inner, style="Card.TFrame")
+        options.pack(fill="x", pady=(9, 0))
+        ttk.Checkbutton(
+            options,
+            text="显示 API Key",
+            style="Card.TCheckbutton",
+            variable=self.show_key_var,
+            command=lambda: self.api_entry.configure(show="" if self.show_key_var.get() else "●"),
+        ).pack(side="left")
+        ttk.Checkbutton(
+            options,
+            text="校验 HTTPS 证书",
+            style="Card.TCheckbutton",
+            variable=self.verify_ssl_var,
+        ).pack(side="left", padx=(12, 18))
+        ttk.Label(options, text="目录路径前缀", style="Muted.TLabel").pack(side="left", padx=(0, 6))
+        ttk.Entry(options, textvariable=self.directory_prefix_var).pack(side="left", fill="x", expand=True)
+        ttk.Label(
+            options,
+            text=r"例：\\192.168.1.10",
+            style="Muted.TLabel",
+        ).pack(side="left", padx=(8, 0))
+
+        return card
+
+    def _build_nav_button(self, parent: tk.Widget, key: str, text: str) -> None:
+        button = tk.Button(
+            parent,
+            text=text,
+            command=lambda current=key: self.show_page(current),
+            anchor="w",
+            background=SIDEBAR,
+            foreground=TEXT,
+            activebackground=PRIMARY_SOFT,
+            activeforeground=PRIMARY,
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            padx=16,
+            pady=9,
+            cursor="hand2",
+            font=("Microsoft YaHei UI", 10),
+        )
+        button.pack(fill="x", padx=10, pady=2)
+        self.nav_buttons[key] = button
+
+    def show_page(self, key: str) -> None:
+        titles = {
+            "actor": (
+                "演员头像清理",
+                "扫描指定媒体库中的演员头像，预览确认后再执行清理。",
+            ),
+            "missing": (
+                "无演员影片扫描",
+                "查找没有 Actor 信息的影片，并支持批量刷新元数据。",
+            ),
+            "director": (
+                "导演信息清理",
+                "扫描影片 Director 信息，备份后批量移除。",
+            ),
+        }
+        frame = self.page_frames.get(key)
+        if frame is None:
+            return
+        self.current_page = key
+        frame.tkraise()
+        title, subtitle = titles[key]
+        self.page_title_var.set(title)
+        self.page_subtitle_var.set(subtitle)
+        self.close_library_dropdown()
+        for nav_key, button in self.nav_buttons.items():
+            active = nav_key == key
+            button.configure(
+                background=PRIMARY if active else SIDEBAR,
+                foreground="#FFFFFF" if active else TEXT,
+                activebackground=PRIMARY_ACTIVE if active else PRIMARY_SOFT,
+                activeforeground="#FFFFFF" if active else PRIMARY,
+                font=("Microsoft YaHei UI", 10, "bold" if active else "normal"),
+            )
+
+    def refresh_result_counts(self) -> None:
+        self.actor_result_var.set(f"{len(self.actor_rows)} 条")
+        self.missing_result_var.set(f"{len(self.missing_rows)} 部")
+        self.director_result_var.set(f"{len(self.director_rows)} 部")
 
     @staticmethod
     def normalize_scope(value: Any) -> str:
@@ -180,28 +497,39 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         display_var: tk.StringVar,
         scope_var: tk.StringVar,
     ) -> ttk.Frame:
-        frame = ttk.Frame(parent)
+        frame = ttk.Frame(parent, style="Card.TFrame")
         frame.pack(fill="x", pady=(0, 8))
 
-        ttk.Radiobutton(frame, text="全部媒体库", variable=scope_var, value="all").pack(side="left")
-        ttk.Radiobutton(frame, text="指定媒体库", variable=scope_var, value="selected").pack(
-            side="left", padx=(8, 8)
-        )
+        ttk.Label(frame, text="媒体库范围", style="Muted.TLabel").pack(side="left", padx=(0, 8))
+        ttk.Radiobutton(
+            frame,
+            text="全部媒体库",
+            style="Card.TRadiobutton",
+            variable=scope_var,
+            value="all",
+        ).pack(side="left")
+        ttk.Radiobutton(
+            frame,
+            text="指定媒体库",
+            style="Card.TRadiobutton",
+            variable=scope_var,
+            value="selected",
+        ).pack(side="left", padx=(8, 8))
 
         selector_shell = tk.Frame(
             frame,
-            background="#ffffff",
-            highlightbackground="#cfcfd4",
-            highlightcolor="#8f8f96",
+            background=CARD,
+            highlightbackground=BORDER,
+            highlightcolor=PRIMARY,
             highlightthickness=1,
             bd=0,
         )
         selector_shell.pack(side="left", fill="x", expand=True)
 
-        chip_frame = tk.Frame(selector_shell, background="#ffffff")
+        chip_frame = tk.Frame(selector_shell, background=CARD)
         chip_frame.pack(side="left", fill="x", expand=True, padx=(7, 3), pady=4)
 
-        dropdown_button = ttk.Button(selector_shell, text="⌄", width=3)
+        dropdown_button = ttk.Button(selector_shell, text="⌄", width=3, style="Secondary.TButton")
         dropdown_button.pack(side="right", padx=(0, 3), pady=2)
 
         def render_chips(*_args: Any) -> None:
@@ -217,7 +545,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
                 tk.Label(
                     chip_frame,
                     text="请选择媒体库",
-                    background="#ffffff",
+                    background=CARD,
                     foreground="#777777",
                     bd=0,
                     padx=2,
@@ -385,14 +713,14 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
 
         shell = tk.Frame(
             popup,
-            background="#ffffff",
+            background=CARD,
             highlightbackground="#d9dde3",
             highlightthickness=1,
             bd=0,
         )
         shell.pack(fill="both", expand=True)
 
-        body = tk.Frame(shell, background="#ffffff")
+        body = tk.Frame(shell, background=CARD)
         body.pack(fill="both", expand=True, padx=10, pady=(9, 6))
 
         flags: dict[str, tk.BooleanVar] = {}
@@ -428,14 +756,14 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
             flag = tk.BooleanVar(value=library_id in current_ids)
             flags[library_id] = flag
 
-            row = tk.Frame(body, background="#ffffff", bd=0, highlightthickness=0)
+            row = tk.Frame(body, background=CARD, bd=0, highlightthickness=0)
             row.pack(fill="x", pady=1)
 
             box = tk.Canvas(
                 row,
                 width=18,
                 height=18,
-                background="#ffffff",
+                background=CARD,
                 highlightthickness=0,
                 bd=0,
             )
@@ -444,7 +772,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
             label = tk.Label(
                 row,
                 text=library_name,
-                background="#ffffff",
+                background=CARD,
                 foreground="#222222",
                 anchor="w",
                 bd=0,
@@ -496,7 +824,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
 
         tk.Frame(shell, background="#e5e7eb", height=1, bd=0).pack(fill="x", padx=10, pady=(2, 0))
 
-        footer = tk.Frame(shell, background="#ffffff", bd=0)
+        footer = tk.Frame(shell, background=CARD, bd=0)
         footer.pack(fill="x", padx=10, pady=8)
 
         def flat_button(parent: tk.Widget, text: str, command: Callable[[], None]) -> tk.Button:
@@ -504,7 +832,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
                 parent,
                 text=text,
                 command=command,
-                background="#ffffff",
+                background=CARD,
                 activebackground="#f3f4f6",
                 foreground="#222222",
                 activeforeground="#222222",
@@ -631,11 +959,17 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         scope_var.set("selected")
         self.save_all_settings(show_message=False)
 
-    def make_tree(self, parent: ttk.Frame, columns: list[tuple[str, str, int]]) -> ttk.Treeview:
-        wrap = ttk.Frame(parent)
+    def make_tree(self, parent: tk.Widget, columns: list[tuple[str, str, int]]) -> ttk.Treeview:
+        wrap = ttk.Frame(parent, style="Card.TFrame")
         wrap.pack(fill="both", expand=True)
         names = [c[0] for c in columns]
-        tree = ttk.Treeview(wrap, columns=names, show="headings", selectmode="extended")
+        tree = ttk.Treeview(
+            wrap,
+            columns=names,
+            show="headings",
+            selectmode="extended",
+            style="Modern.Treeview",
+        )
         heading_titles = {key: title for key, title, _width in columns}
         tree._heading_titles = heading_titles  # type: ignore[attr-defined]
         tree._sort_state = {}  # type: ignore[attr-defined]
@@ -750,6 +1084,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
             self.missing_rows = []
         elif tree is self.director_tree:
             self.director_rows = []
+        self.refresh_result_counts()
 
     def collect_settings(self) -> dict[str, Any]:
         try:
@@ -825,6 +1160,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
 
     def set_busy(self, busy: bool, text: str = "") -> None:
         self.busy = busy
+        self.sidebar_status_var.set("处理中…" if busy else "就绪")
         for btn in self.action_buttons:
             try:
                 btn.configure(state="disabled" if busy else "normal")
@@ -879,6 +1215,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
             self.save_all_settings(show_message=False)
             server_name = info.get("ServerName") or info.get("Name") or "Emby Server"
             version = info.get("Version") or "未知"
+            self.connection_status_var.set(f"已连接 · {server_name} · v{version}")
             messagebox.showinfo(
                 APP_TITLE,
                 f"连接成功。\n服务器：{server_name}\n版本：{version}\n媒体库：{len(libraries)} 个",
