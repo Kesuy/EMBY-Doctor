@@ -28,6 +28,21 @@ FONT_SECTION = ("Microsoft YaHei UI", 12, "bold")
 FONT_NAV = ("Microsoft YaHei UI", 10)
 
 
+class AutoHideScrollbar(ttk.Scrollbar):
+    """Scrollbar that disappears while the whole content is visible."""
+
+    def set(self, first: str, last: str) -> None:
+        try:
+            fully_visible = float(first) <= 0.0 and float(last) >= 1.0
+        except (TypeError, ValueError):
+            fully_visible = False
+        if fully_visible:
+            self.grid_remove()
+        else:
+            self.grid()
+        super().set(first, last)
+
+
 def apply_theme(root: tk.Tk) -> ttk.Style:
     root.configure(background=BG)
     style = ttk.Style(root)
@@ -170,5 +185,56 @@ def apply_theme(root: tk.Tk) -> ttk.Style:
         background=[("active", "#EEF3F9")],
         foreground=[("active", TEXT)],
     )
+
+    # Slim, arrow-less scrollbars that fit the flat card/table visual language.
+    try:
+        style.layout(
+            "Modern.Vertical.TScrollbar",
+            [
+                (
+                    "Vertical.Scrollbar.trough",
+                    {
+                        "sticky": "ns",
+                        "children": [
+                            ("Vertical.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})
+                        ],
+                    },
+                )
+            ],
+        )
+        style.layout(
+            "Modern.Horizontal.TScrollbar",
+            [
+                (
+                    "Horizontal.Scrollbar.trough",
+                    {
+                        "sticky": "ew",
+                        "children": [
+                            ("Horizontal.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})
+                        ],
+                    },
+                )
+            ],
+        )
+    except tk.TclError:
+        pass
+    for scrollbar_style in ("Modern.Vertical.TScrollbar", "Modern.Horizontal.TScrollbar"):
+        style.configure(
+            scrollbar_style,
+            background="#C9D3DF",
+            troughcolor=CARD,
+            bordercolor=CARD,
+            lightcolor="#C9D3DF",
+            darkcolor="#C9D3DF",
+            arrowcolor=MUTED,
+            relief="flat",
+            borderwidth=0,
+            gripcount=0,
+            width=8,
+        )
+        style.map(
+            scrollbar_style,
+            background=[("active", "#AEBBCB"), ("pressed", "#96A6B9")],
+        )
 
     return style
