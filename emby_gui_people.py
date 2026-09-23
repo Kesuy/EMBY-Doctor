@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import base64
+from io import BytesIO
 import threading
 import urllib.parse
 from typing import Any
@@ -24,6 +24,7 @@ from emby_gui_theme import (
     WARNING,
     WARNING_SOFT,
     AutoHideScrollbar,
+    RoundedButton,
 )
 from emby_people import (
     build_duplicate_candidates,
@@ -47,6 +48,8 @@ class PeopleQualityTabMixin:
         self.conflict_count_var = tk.StringVar(value="冲突 0 组")
         self.people_migration_hint_var = tk.StringVar(value="请选择候选人物进行比较。")
         self.people_exact_name_only_var = tk.BooleanVar(value=False)
+        self.people_score_100_only_var = tk.BooleanVar(value=False)
+        self.people_provider_match_only_var = tk.BooleanVar(value=False)
         self.people_subpage = "duplicate"
         self.people_subnav_buttons: dict[str, tk.Button] = {}
         self.people_subframes: dict[str, tk.Frame] = {}
@@ -127,20 +130,19 @@ class PeopleQualityTabMixin:
         self.show_people_subpage("duplicate")
 
     def _people_subnav_button(self, parent: tk.Widget, key: str, text: str) -> None:
-        button = tk.Button(
+        button = RoundedButton(
             parent,
             text=text,
             command=lambda current=key: self.show_people_subpage(current),
-            relief="flat",
-            bd=0,
-            highlightthickness=0,
+            variant="ghost",
             background=CARD,
             foreground=MUTED,
-            activebackground=CARD,
+            activebackground=PRIMARY_SOFT,
             activeforeground=PRIMARY,
+            bordercolor=CARD,
+            height=32,
+            radius=8,
             padx=10,
-            pady=8,
-            cursor="hand2",
             font=("Microsoft YaHei UI", 10),
         )
         button.pack(side="left", padx=(0, 8))
@@ -155,7 +157,9 @@ class PeopleQualityTabMixin:
         for nav_key, button in self.people_subnav_buttons.items():
             active = nav_key == key
             button.configure(
+                background=PRIMARY_SOFT if active else CARD,
                 foreground=PRIMARY if active else MUTED,
+                bordercolor=PRIMARY_SOFT if active else CARD,
                 font=("Microsoft YaHei UI", 10, "bold" if active else "normal"),
             )
 
@@ -165,10 +169,10 @@ class PeopleQualityTabMixin:
         action = tk.Frame(action_card, background=CARD, bd=0)
         action.pack(fill="x", padx=14, pady=11)
 
-        b_scan = ttk.Button(
+        b_scan = RoundedButton(
             action,
             text="扫描重复人物",
-            style="Primary.TButton",
+            variant="primary",
             command=lambda: self.scan_people_audit("duplicate"),
         )
         b_scan.pack(side="left")
@@ -188,6 +192,30 @@ class PeopleQualityTabMixin:
             variable=self.people_exact_name_only_var,
             command=self.populate_people_audit_views,
         ).pack(side="left")
+        ttk.Checkbutton(
+            action,
+            text="仅 100 分",
+            style="Card.TCheckbutton",
+            variable=self.people_score_100_only_var,
+            command=self.populate_people_audit_views,
+        ).pack(side="left", padx=(10, 0))
+        ttk.Checkbutton(
+            action,
+            text="仅 Provider ID 一致",
+            style="Card.TCheckbutton",
+            variable=self.people_provider_match_only_var,
+            command=self.populate_people_audit_views,
+        ).pack(side="left", padx=(10, 0))
+
+        self.bulk_merge_button = RoundedButton(
+            action,
+            text="批量合并当前筛选",
+            variant="secondary",
+            command=self.batch_merge_visible_duplicates,
+        )
+        self.bulk_merge_button.pack(side="right", padx=(8, 0))
+        self.action_buttons.append(self.bulk_merge_button)
+
         tk.Label(
             action,
             textvariable=self.duplicate_count_var,
@@ -290,10 +318,10 @@ class PeopleQualityTabMixin:
             padx=9,
             pady=4,
         ).pack(side="right", padx=(8, 0))
-        self.swap_keep_button = ttk.Button(
+        self.swap_keep_button = RoundedButton(
             detail_header,
             text="交换保留方向",
-            style="Secondary.TButton",
+            variant="secondary",
             command=self.swap_duplicate_direction,
         )
         self.swap_keep_button.pack(side="right")
@@ -367,10 +395,10 @@ class PeopleQualityTabMixin:
             justify="left",
         ).pack(side="left", fill="x", expand=True)
 
-        self.migrate_button = ttk.Button(
+        self.migrate_button = RoundedButton(
             footer,
-            text="迁移右侧关联 → 保留左侧人物",
-            style="Primary.TButton",
+            text="合并此组（迁移关联）",
+            variant="primary",
             command=self.migrate_selected_duplicate,
         )
         self.migrate_button.pack(side="right")
@@ -483,10 +511,10 @@ class PeopleQualityTabMixin:
 
         head = tk.Frame(inner, background=CARD, bd=0)
         head.pack(fill="x", pady=(0, 9))
-        b_scan = ttk.Button(
+        b_scan = RoundedButton(
             head,
             text="扫描头像质量",
-            style="Primary.TButton",
+            variant="primary",
             command=lambda: self.scan_people_audit("avatar"),
         )
         b_scan.pack(side="left")
@@ -527,10 +555,10 @@ class PeopleQualityTabMixin:
 
         head = tk.Frame(inner, background=CARD, bd=0)
         head.pack(fill="x", pady=(0, 9))
-        b_scan = ttk.Button(
+        b_scan = RoundedButton(
             head,
             text="扫描资料冲突",
-            style="Primary.TButton",
+            variant="primary",
             command=lambda: self.scan_people_audit("conflict"),
         )
         b_scan.pack(side="left")
@@ -639,19 +667,35 @@ class PeopleQualityTabMixin:
 
         self.run_job(labels.get(target, labels["duplicate"]), worker, done)
 
+    def visible_people_candidates(self) -> list[dict[str, Any]]:
+        candidates = list(self.person_candidates)
+        if self.people_exact_name_only_var.get():
+            candidates = [
+                candidate
+                for candidate in candidates
+                if str(candidate["Left"].get("Name") or "").strip()
+                == str(candidate["Right"].get("Name") or "").strip()
+            ]
+        if self.people_score_100_only_var.get():
+            candidates = [
+                candidate
+                for candidate in candidates
+                if int(candidate.get("Confidence") or 0) == 100
+            ]
+        if self.people_provider_match_only_var.get():
+            candidates = [
+                candidate
+                for candidate in candidates
+                if str(candidate.get("Reason") or "") == "Provider ID 一致"
+            ]
+        return candidates
+
     def populate_people_audit_views(self) -> None:
         for item in self.duplicate_tree.get_children():
             self.duplicate_tree.delete(item)
         self.people_candidate_by_iid.clear()
 
-        visible_candidates = list(self.person_candidates)
-        if self.people_exact_name_only_var.get():
-            visible_candidates = [
-                candidate
-                for candidate in visible_candidates
-                if str(candidate["Left"].get("Name") or "").strip()
-                == str(candidate["Right"].get("Name") or "").strip()
-            ]
+        visible_candidates = self.visible_people_candidates()
 
         for index, candidate in enumerate(visible_candidates):
             iid = f"dup-{index}"
@@ -666,12 +710,30 @@ class PeopleQualityTabMixin:
             )
             self.people_candidate_by_iid[iid] = candidate
 
-        if self.people_exact_name_only_var.get():
+        filters_active = any(
+            (
+                self.people_exact_name_only_var.get(),
+                self.people_score_100_only_var.get(),
+                self.people_provider_match_only_var.get(),
+            )
+        )
+        if filters_active:
             self.duplicate_count_var.set(
                 f"候选 {len(visible_candidates)} / {len(self.person_candidates)} 组"
             )
         else:
             self.duplicate_count_var.set(f"候选 {len(self.person_candidates)} 组")
+
+        eligible = sum(
+            1
+            for candidate in visible_candidates
+            if not candidate.get("Conflicts")
+            and self.person_associations.get(str(candidate["Right"].get("Id") or ""))
+        )
+        self.bulk_merge_button.configure(
+            state="normal" if eligible else "disabled",
+            text=f"批量合并当前筛选（{eligible}）" if visible_candidates else "批量合并当前筛选",
+        )
 
         for item in self.avatar_tree.get_children():
             self.avatar_tree.delete(item)
@@ -794,7 +856,7 @@ class PeopleQualityTabMixin:
         if right_assoc > 0:
             self.migrate_button.configure(
                 state="normal",
-                text="迁移右侧关联 → 保留左侧人物",
+                text="合并此组（迁移关联）",
             )
             self.people_migration_hint_var.set(
                 f"预计迁移 {right_assoc} 部关联影片{conflict_text}\n"
@@ -853,7 +915,7 @@ class PeopleQualityTabMixin:
             try:
                 raw = self.client().get_bytes(
                     f"/Items/{urllib.parse.quote(person_id, safe='')}/Images/Primary",
-                    {"maxWidth": 120, "maxHeight": 160, "format": "png"},
+                    {"maxWidth": 240, "maxHeight": 320},
                 )
             except Exception:
                 raw = b""
@@ -864,9 +926,17 @@ class PeopleQualityTabMixin:
                         self._set_person_image_placeholder(label)
                     return
                 try:
-                    encoded = base64.b64encode(raw).decode("ascii")
-                    image = tk.PhotoImage(data=encoded)
-                    label.configure(image=image, text="")
+                    from PIL import Image, ImageOps, ImageTk
+
+                    source = Image.open(BytesIO(raw))
+                    source = ImageOps.exif_transpose(source).convert("RGB")
+                    fitted = ImageOps.contain(
+                        source,
+                        (112, 150),
+                        method=Image.Resampling.LANCZOS,
+                    )
+                    image = ImageTk.PhotoImage(fitted)
+                    label.configure(image=image, text="", width=112, height=150)
                     self.people_photo_refs[f"{side}:{person_id}:{generation}"] = image
                 except Exception:
                     self._set_person_image_placeholder(label)
@@ -898,6 +968,86 @@ class PeopleQualityTabMixin:
                 ),
             )
 
+    def _migrate_candidate_core(
+        self,
+        client,
+        user_id: str,
+        candidate: dict[str, Any],
+    ) -> dict[str, Any]:
+        keep_person = dict(candidate["Left"])
+        duplicate_person = dict(candidate["Right"])
+        keep_id = str(keep_person.get("Id") or "")
+        duplicate_id = str(duplicate_person.get("Id") or "")
+        associations = list(self.person_associations.get(duplicate_id, []))
+        success = 0
+        failed: list[dict[str, str]] = []
+        updated_movies: list[dict[str, Any]] = []
+
+        for movie in associations:
+            movie_id = str(movie.get("Id") or "")
+            try:
+                full_item = client.get_full_item(user_id, movie_id)
+                payload, replaced = replace_person_reference(
+                    full_item,
+                    duplicate_person,
+                    keep_person,
+                )
+                if replaced <= 0:
+                    continue
+                client.post_json(
+                    f"/Items/{urllib.parse.quote(movie_id, safe='')}",
+                    payload,
+                )
+                verified = client.get_full_item(user_id, movie_id)
+                verified_ids = {
+                    str(person.get("Id") or "").strip()
+                    for person in (verified.get("People") or [])
+                }
+                if duplicate_id in verified_ids or keep_id not in verified_ids:
+                    raise RuntimeError("Emby 返回的 People 关联未按目标 Person ID 更新")
+                success += 1
+                updated_movies.append(movie)
+            except Exception as exc:
+                failed.append(
+                    {
+                        "Id": movie_id,
+                        "Name": str(movie.get("Name") or movie_id),
+                        "Error": str(exc),
+                    }
+                )
+
+        return {
+            "candidate": candidate,
+            "keep_id": keep_id,
+            "duplicate_id": duplicate_id,
+            "associations": associations,
+            "success": success,
+            "failed": failed,
+            "updated_movies": updated_movies,
+        }
+
+    def _apply_migration_result(self, result: dict[str, Any]) -> None:
+        keep_id = str(result.get("keep_id") or "")
+        duplicate_id = str(result.get("duplicate_id") or "")
+        associations = list(result.get("associations") or [])
+        updated_movies = list(result.get("updated_movies") or [])
+        failed = list(result.get("failed") or [])
+
+        keep_bucket = self.person_associations.setdefault(keep_id, [])
+        known = {str(item.get("Id") or "") for item in keep_bucket}
+        for movie in updated_movies:
+            movie_id = str(movie.get("Id") or "")
+            if movie_id not in known:
+                keep_bucket.append(movie)
+                known.add(movie_id)
+
+        failed_ids = {str(item.get("Id") or "") for item in failed}
+        self.person_associations[duplicate_id] = [
+            movie
+            for movie in associations
+            if str(movie.get("Id") or "") in failed_ids
+        ]
+
     def migrate_selected_duplicate(self) -> None:
         candidate = self.people_selected_candidate
         if not candidate:
@@ -906,13 +1056,12 @@ class PeopleQualityTabMixin:
 
         keep_person = dict(candidate["Left"])
         duplicate_person = dict(candidate["Right"])
-        keep_id = str(keep_person.get("Id") or "")
         duplicate_id = str(duplicate_person.get("Id") or "")
         associations = list(self.person_associations.get(duplicate_id, []))
         if not associations:
             messagebox.showinfo(
                 APP_TITLE,
-                "右侧人物当前没有关联影片。人物实体不会被自动删除，可重新扫描确认状态。",
+                "右侧人物当前没有关联影片。可交换保留方向，或调整媒体库后重新扫描。",
             )
             return
 
@@ -926,9 +1075,10 @@ class PeopleQualityTabMixin:
 
         if not messagebox.askyesno(
             APP_TITLE,
-            f"确认把右侧人物“{duplicate_person.get('Name') or duplicate_id}”的 "
-            f"{len(associations)} 部关联影片迁移到左侧“{keep_person.get('Name') or keep_id}”？"
-            f"\n\n只修改影片 People 关联，不会删除 Person 实体。{conflict_note}",
+            f"确认合并这一组重复人物？\n\n"
+            f"将把右侧“{duplicate_person.get('Name') or duplicate_id}”的 "
+            f"{len(associations)} 部关联影片迁移到左侧“{keep_person.get('Name') or ''}”。"
+            f"\n\n不会自动删除 Person 实体。{conflict_note}",
             icon="warning",
         ):
             return
@@ -939,66 +1089,18 @@ class PeopleQualityTabMixin:
             self.job_error(exc)
             return
 
-        def worker() -> tuple[int, list[dict[str, str]], list[dict[str, Any]]]:
+        def worker() -> dict[str, Any]:
             user_id, _ = client.get_admin_user_id()
-            success = 0
-            failed: list[dict[str, str]] = []
-            updated_movies: list[dict[str, Any]] = []
-            for movie in associations:
-                movie_id = str(movie.get("Id") or "")
-                try:
-                    full_item = client.get_full_item(user_id, movie_id)
-                    payload, replaced = replace_person_reference(
-                        full_item,
-                        duplicate_person,
-                        keep_person,
-                    )
-                    if replaced <= 0:
-                        continue
-                    client.post_json(
-                        f"/Items/{urllib.parse.quote(movie_id, safe='')}",
-                        payload,
-                    )
-                    verified = client.get_full_item(user_id, movie_id)
-                    verified_ids = {
-                        str(person.get("Id") or "").strip()
-                        for person in (verified.get("People") or [])
-                    }
-                    if duplicate_id in verified_ids or keep_id not in verified_ids:
-                        raise RuntimeError("Emby 返回的 People 关联未按目标 Person ID 更新")
-                    success += 1
-                    updated_movies.append(movie)
-                except Exception as exc:
-                    failed.append(
-                        {
-                            "Id": movie_id,
-                            "Name": str(movie.get("Name") or movie_id),
-                            "Error": str(exc),
-                        }
-                    )
-            return success, failed, updated_movies
+            return self._migrate_candidate_core(client, user_id, candidate)
 
-        def done(
-            result: tuple[int, list[dict[str, str]], list[dict[str, Any]]]
-        ) -> None:
-            success, failed, updated_movies = result
-            keep_bucket = self.person_associations.setdefault(keep_id, [])
-            known = {str(item.get("Id") or "") for item in keep_bucket}
-            for movie in updated_movies:
-                movie_id = str(movie.get("Id") or "")
-                if movie_id not in known:
-                    keep_bucket.append(movie)
-                    known.add(movie_id)
-
-            failed_ids = {str(item.get("Id") or "") for item in failed}
-            self.person_associations[duplicate_id] = [
-                movie
-                for movie in associations
-                if str(movie.get("Id") or "") in failed_ids
-            ]
+        def done(result: dict[str, Any]) -> None:
+            self._apply_migration_result(result)
+            failed = list(result.get("failed") or [])
+            success = int(result.get("success") or 0)
             self.render_duplicate_candidate(candidate)
+            self.populate_people_audit_views()
             self.status_var.set(
-                f"迁移完成：更新 {success} 个 Movie，失败 {len(failed)}；Person 实体未自动删除。"
+                f"合并完成：更新 {success} 个影片，失败 {len(failed)}；Person 实体未自动删除。"
             )
             if failed:
                 detail = "\n".join(
@@ -1009,14 +1111,106 @@ class PeopleQualityTabMixin:
                     detail += f"\n……另有 {len(failed) - 8} 项失败"
                 messagebox.showwarning(
                     APP_TITLE,
-                    f"迁移完成，但有部分影片更新失败：\n\n{detail}\n\n"
+                    f"合并完成，但有部分影片更新失败：\n\n{detail}\n\n"
                     "建议重新扫描确认重复关系。",
                 )
             else:
                 messagebox.showinfo(
                     APP_TITLE,
-                    f"迁移完成：更新 {success} 个 Movie。\n\n"
-                    "人物实体没有被自动删除；建议重新扫描确认重复关系。",
+                    f"合并完成：更新 {success} 个影片。\n\n"
+                    "Person 实体没有被自动删除，建议重新扫描确认。",
                 )
 
-        self.run_job("正在迁移人物关联……", worker, done)
+        self.run_job("正在合并重复人物关联……", worker, done)
+
+    def batch_merge_visible_duplicates(self) -> None:
+        candidates = self.visible_people_candidates()
+        if not candidates:
+            messagebox.showinfo(APP_TITLE, "当前筛选结果没有可处理的重复人物。")
+            return
+
+        conflict_candidates = [candidate for candidate in candidates if candidate.get("Conflicts")]
+        no_assoc_candidates = [
+            candidate
+            for candidate in candidates
+            if not self.person_associations.get(str(candidate["Right"].get("Id") or ""))
+        ]
+        eligible = [
+            candidate
+            for candidate in candidates
+            if not candidate.get("Conflicts")
+            and self.person_associations.get(str(candidate["Right"].get("Id") or ""))
+        ]
+
+        if not eligible:
+            messagebox.showinfo(
+                APP_TITLE,
+                "当前筛选结果没有可安全批量合并的候选。\n\n"
+                "Provider ID 冲突会自动跳过；右侧没有关联影片的候选也会跳过。",
+            )
+            return
+
+        movie_count = sum(
+            len(self.person_associations.get(str(candidate["Right"].get("Id") or ""), []))
+            for candidate in eligible
+        )
+        if not messagebox.askyesno(
+            APP_TITLE,
+            f"确认批量合并当前筛选结果？\n\n"
+            f"当前候选：{len(candidates)} 组\n"
+            f"可批量合并：{len(eligible)} 组 / {movie_count} 个影片关联\n"
+            f"Provider 冲突跳过：{len(conflict_candidates)} 组\n"
+            f"无可迁移关联跳过：{len(no_assoc_candidates)} 组\n\n"
+            "批量操作只迁移 People 关联，不自动删除 Person 实体。",
+            icon="warning",
+        ):
+            return
+
+        try:
+            client = self.client()
+        except Exception as exc:
+            self.job_error(exc)
+            return
+
+        def worker() -> list[dict[str, Any]]:
+            user_id, _ = client.get_admin_user_id()
+            results: list[dict[str, Any]] = []
+            for candidate in eligible:
+                results.append(self._migrate_candidate_core(client, user_id, candidate))
+            return results
+
+        def done(results: list[dict[str, Any]]) -> None:
+            for result in results:
+                self._apply_migration_result(result)
+
+            successful_groups = sum(
+                1
+                for result in results
+                if int(result.get("success") or 0) > 0 and not result.get("failed")
+            )
+            failed_groups = sum(1 for result in results if result.get("failed"))
+            updated_movies = sum(int(result.get("success") or 0) for result in results)
+            failed_movies = sum(len(result.get("failed") or []) for result in results)
+
+            self.populate_people_audit_views()
+            self.status_var.set(
+                f"批量合并完成：成功 {successful_groups}/{len(results)} 组，"
+                f"更新 {updated_movies} 个影片，失败影片 {failed_movies}。"
+            )
+
+            message = (
+                f"批量合并完成。\n\n"
+                f"成功组：{successful_groups}\n"
+                f"失败组：{failed_groups}\n"
+                f"更新影片：{updated_movies}\n"
+                f"失败影片：{failed_movies}\n"
+                f"Provider 冲突跳过：{len(conflict_candidates)}\n"
+                f"无关联跳过：{len(no_assoc_candidates)}\n\n"
+                "Person 实体没有被自动删除，建议完成后重新扫描。"
+            )
+            if failed_groups:
+                messagebox.showwarning(APP_TITLE, message)
+            else:
+                messagebox.showinfo(APP_TITLE, message)
+
+        self.run_job("正在批量合并重复人物……", worker, done)
