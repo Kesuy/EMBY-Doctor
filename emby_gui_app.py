@@ -33,6 +33,9 @@ from emby_gui_theme import (
     WARNING,
     DANGER,
     AutoHideScrollbar,
+    RoundedButton,
+    RoundedContainer,
+    RoundedEntry,
     apply_theme,
 )
 
@@ -395,24 +398,24 @@ class EmbyBatchApp(
         address = ttk.Frame(row, style="Card.TFrame")
         address.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         ttk.Label(address, text="服务器地址", style="Muted.TLabel").pack(anchor="w", pady=(0, 3))
-        ttk.Entry(address, textvariable=self.url_var).pack(fill="x")
+        RoundedEntry(address, textvariable=self.url_var).pack(fill="x")
 
         api = ttk.Frame(row, style="Card.TFrame")
         api.grid(row=0, column=1, sticky="ew", padx=(0, 8))
         ttk.Label(api, text="API Key", style="Muted.TLabel").pack(anchor="w", pady=(0, 3))
-        self.api_entry = ttk.Entry(api, textvariable=self.api_key_var, show="●")
+        self.api_entry = RoundedEntry(api, textvariable=self.api_key_var, show="●")
         self.api_entry.pack(fill="x")
 
         timeout = ttk.Frame(row, style="Card.TFrame")
         timeout.grid(row=0, column=2, sticky="ew", padx=(0, 8))
         ttk.Label(timeout, text="超时(秒)", style="Muted.TLabel").pack(anchor="w", pady=(0, 3))
-        ttk.Entry(timeout, textvariable=self.timeout_var, width=8).pack(fill="x")
+        RoundedEntry(timeout, textvariable=self.timeout_var, width=8).pack(fill="x")
 
         actions = ttk.Frame(row, style="Card.TFrame")
         actions.grid(row=0, column=3, sticky="se")
-        b_test = ttk.Button(actions, text="测试连接", style="Primary.TButton", command=self.test_connection)
+        b_test = RoundedButton(actions, text="测试连接", variant="primary", command=self.test_connection)
         b_test.pack(side="left", padx=(0, 6))
-        b_save = ttk.Button(actions, text="保存设置", style="Secondary.TButton", command=self.save_all_settings)
+        b_save = RoundedButton(actions, text="保存设置", variant="secondary", command=self.save_all_settings)
         b_save.pack(side="left")
         self.action_buttons.extend([b_test, b_save])
 
@@ -432,7 +435,7 @@ class EmbyBatchApp(
             variable=self.verify_ssl_var,
         ).pack(side="left", padx=(12, 18))
         ttk.Label(options, text="目录路径前缀", style="Muted.TLabel").pack(side="left", padx=(0, 6))
-        ttk.Entry(options, textvariable=self.directory_prefix_var).pack(side="left", fill="x", expand=True)
+        RoundedEntry(options, textvariable=self.directory_prefix_var).pack(side="left", fill="x", expand=True)
         ttk.Label(
             options,
             text=r"例：\\192.168.1.10",
@@ -442,21 +445,20 @@ class EmbyBatchApp(
         return card
 
     def _build_nav_button(self, parent: tk.Widget, key: str, text: str) -> None:
-        button = tk.Button(
+        button = RoundedButton(
             parent,
             text=text,
             command=lambda current=key: self.show_page(current),
+            variant="ghost",
             anchor="w",
             background=SIDEBAR,
             foreground=TEXT,
             activebackground=PRIMARY_SOFT,
             activeforeground=PRIMARY,
-            relief="flat",
-            bd=0,
-            highlightthickness=0,
+            bordercolor=SIDEBAR,
             padx=16,
-            pady=9,
-            cursor="hand2",
+            height=38,
+            radius=9,
             font=("Microsoft YaHei UI", 10),
         )
         button.pack(fill="x", padx=10, pady=2)
@@ -501,6 +503,7 @@ class EmbyBatchApp(
                 foreground="#FFFFFF" if active else TEXT,
                 activebackground=PRIMARY_ACTIVE if active else PRIMARY_SOFT,
                 activeforeground="#FFFFFF" if active else PRIMARY,
+                bordercolor=PRIMARY if active else SIDEBAR,
                 font=("Microsoft YaHei UI", 10, "bold" if active else "normal"),
             )
 
@@ -540,21 +543,33 @@ class EmbyBatchApp(
             value="selected",
         ).pack(side="left", padx=(8, 8))
 
-        selector_shell = tk.Frame(
+        selector_shell = RoundedContainer(
             frame,
+            height=36,
+            radius=9,
             background=CARD,
-            highlightbackground=BORDER,
-            highlightcolor=PRIMARY,
-            highlightthickness=1,
-            bd=0,
+            bordercolor=BORDER,
+            active_bordercolor=PRIMARY,
         )
         selector_shell.pack(side="left", fill="x", expand=True)
 
-        chip_frame = tk.Frame(selector_shell, background=CARD)
-        chip_frame.pack(side="left", fill="x", expand=True, padx=(7, 3), pady=4)
+        chip_frame = tk.Frame(selector_shell.content, background=CARD)
+        chip_frame.pack(side="left", fill="x", expand=True, padx=(3, 3), pady=2)
 
-        dropdown_button = ttk.Button(selector_shell, text="⌄", width=3, style="Secondary.TButton")
-        dropdown_button.pack(side="right", padx=(0, 3), pady=2)
+        dropdown_button = RoundedButton(
+            selector_shell.content,
+            text="⌄",
+            width=34,
+            height=28,
+            radius=8,
+            variant="ghost",
+            background=CARD,
+            foreground=MUTED,
+            activebackground=PRIMARY_SOFT,
+            activeforeground=PRIMARY,
+            bordercolor=CARD,
+        )
+        dropdown_button.pack(side="right", padx=(2, 0), pady=0)
 
         def render_chips(*_args: Any) -> None:
             for child in chip_frame.winfo_children():
@@ -617,6 +632,7 @@ class EmbyBatchApp(
             return "break"
 
         selector_shell.bind("<Button-1>", toggle_dropdown)
+        selector_shell.content.bind("<Button-1>", toggle_dropdown)
         chip_frame.bind("<Button-1>", toggle_dropdown)
         dropdown_button.configure(command=toggle_dropdown)
         self.action_buttons.append(dropdown_button)
@@ -853,23 +869,19 @@ class EmbyBatchApp(
         footer = tk.Frame(shell, background=CARD, bd=0)
         footer.pack(fill="x", padx=10, pady=8)
 
-        def flat_button(parent: tk.Widget, text: str, command: Callable[[], None]) -> tk.Button:
-            return tk.Button(
+        def flat_button(parent: tk.Widget, text: str, command: Callable[[], None]) -> RoundedButton:
+            return RoundedButton(
                 parent,
                 text=text,
                 command=command,
+                variant="secondary",
+                height=30,
+                radius=8,
                 background=CARD,
-                activebackground="#f3f4f6",
-                foreground="#222222",
-                activeforeground="#222222",
-                relief="flat",
-                bd=0,
-                highlightthickness=1,
-                highlightbackground="#d9dde3",
-                highlightcolor="#c7cdd6",
+                foreground=TEXT,
+                activebackground="#F3F6FA",
+                bordercolor=BORDER,
                 padx=12,
-                pady=3,
-                cursor="hand2",
             )
 
         flat_button(
