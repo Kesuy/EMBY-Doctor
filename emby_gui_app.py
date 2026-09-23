@@ -198,6 +198,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
 
         self._build_nav_button(sidebar, "actor", "演员头像清理")
         self._build_nav_button(sidebar, "missing", "无演员影片扫描")
+        self._build_nav_button(sidebar, "people", "重复人物与质检")
         self._build_nav_button(sidebar, "director", "导演信息清理")
 
         tk.Label(
@@ -317,20 +318,22 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         body = tk.Frame(content_area, background=BG, bd=0)
         body.pack(fill="both", expand=True, padx=16, pady=14)
 
-        connection_card = self._build_connection_card(body)
-        connection_card.pack(fill="x", pady=(0, 12))
+        self.connection_card = self._build_connection_card(body)
+        self.connection_card.pack(fill="x", pady=(0, 12))
 
-        page_host = tk.Frame(body, background=BG, bd=0)
-        page_host.pack(fill="both", expand=True)
-        page_host.grid_rowconfigure(0, weight=1)
-        page_host.grid_columnconfigure(0, weight=1)
+        self.page_host = tk.Frame(body, background=BG, bd=0)
+        self.page_host.pack(fill="both", expand=True)
+        self.page_host.grid_rowconfigure(0, weight=1)
+        self.page_host.grid_columnconfigure(0, weight=1)
 
-        self.actor_tab = tk.Frame(page_host, background=BG, bd=0)
-        self.missing_tab = tk.Frame(page_host, background=BG, bd=0)
-        self.director_tab = tk.Frame(page_host, background=BG, bd=0)
+        self.actor_tab = tk.Frame(self.page_host, background=BG, bd=0)
+        self.missing_tab = tk.Frame(self.page_host, background=BG, bd=0)
+        self.people_tab = tk.Frame(self.page_host, background=BG, bd=0)
+        self.director_tab = tk.Frame(self.page_host, background=BG, bd=0)
         self.page_frames = {
             "actor": self.actor_tab,
             "missing": self.missing_tab,
+            "people": self.people_tab,
             "director": self.director_tab,
         }
         for frame in self.page_frames.values():
@@ -338,6 +341,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
 
         self.build_actor_tab()
         self.build_missing_tab()
+        self.build_people_quality_tab()
         self.build_director_tab()
         self.refresh_result_counts()
         self.show_page("actor")
@@ -456,6 +460,10 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
                 "无演员影片扫描",
                 "查找没有 Actor 信息的影片，并支持批量刷新元数据。",
             ),
+            "people": (
+                "重复人物与质检",
+                "按 Provider ID、姓名与资料完整度识别重复 Person，并安全迁移影片关联。",
+            ),
             "director": (
                 "导演信息清理",
                 "扫描影片 Director 信息，备份后批量移除。",
@@ -466,6 +474,10 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
             return
         self.current_page = key
         frame.tkraise()
+        if key == "people":
+            self.connection_card.pack_forget()
+        elif not self.connection_card.winfo_manager():
+            self.connection_card.pack(fill="x", pady=(0, 12), before=self.page_host)
         title, subtitle = titles[key]
         self.page_title_var.set(title)
         self.page_subtitle_var.set(subtitle)
