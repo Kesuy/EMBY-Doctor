@@ -32,6 +32,7 @@ from emby_gui_theme import (
     SUCCESS,
     WARNING,
     DANGER,
+    AutoHideScrollbar,
     apply_theme,
 )
 
@@ -1013,8 +1014,18 @@ class EmbyBatchApp(
             lambda event, current_tree=tree: self.open_tree_directory(event, current_tree),
             add="+",
         )
-        y = ttk.Scrollbar(wrap, orient="vertical", command=tree.yview)
-        x = ttk.Scrollbar(wrap, orient="horizontal", command=tree.xview)
+        y = AutoHideScrollbar(
+            wrap,
+            orient="vertical",
+            command=tree.yview,
+            style="Modern.Vertical.TScrollbar",
+        )
+        x = AutoHideScrollbar(
+            wrap,
+            orient="horizontal",
+            command=tree.xview,
+            style="Modern.Horizontal.TScrollbar",
+        )
         tree.configure(yscrollcommand=y.set, xscrollcommand=x.set)
         tree.grid(row=0, column=0, sticky="nsew")
         y.grid(row=0, column=1, sticky="ns")
