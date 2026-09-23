@@ -119,8 +119,15 @@ class PureFunctionTests(unittest.TestCase):
         rows = list(c.query_people(page_size=2))
         self.assertEqual([row["Id"] for row in rows], ["10", "11", "12"])
         self.assertEqual(calls[0][0], "/Persons")
+        self.assertIsNone(calls[0][1]["ParentId"])
+        self.assertEqual(calls[0][1]["PersonTypes"], "Actor")
         self.assertIn("ProviderIds", calls[0][1]["Fields"])
         self.assertTrue(calls[0][1]["EnableImages"])
+
+        calls.clear()
+        rows = list(c.query_people("lib-1", page_size=2))
+        self.assertEqual([row["Id"] for row in rows], ["10", "11", "12"])
+        self.assertEqual(calls[0][1]["ParentId"], "lib-1")
 
     def test_duplicate_people_detects_same_name_and_prefers_more_complete_profile(self):
         persons = [
@@ -192,7 +199,12 @@ class GuiConfigurationTests(unittest.TestCase):
         cfg = default_settings()
         libs = cfg["libraries"]
         scopes = cfg["scopes"]
-        expected = {"delete_actor_images", "scan_missing_actors", "delete_directors"}
+        expected = {
+            "delete_actor_images",
+            "scan_missing_actors",
+            "people_quality",
+            "delete_directors",
+        }
         self.assertEqual(set(libs), expected)
         self.assertEqual(set(scopes), expected)
         self.assertEqual(set(cfg["library_names"]), expected)
@@ -261,6 +273,9 @@ class GuiConfigurationTests(unittest.TestCase):
             self.assertTrue(hasattr(app, "duplicate_tree"))
             self.assertTrue(hasattr(app, "avatar_tree"))
             self.assertTrue(hasattr(app, "conflict_tree"))
+            self.assertTrue(hasattr(app, "people_lib_var"))
+            self.assertTrue(hasattr(app, "people_scope_var"))
+            self.assertTrue(hasattr(app, "people_exact_name_only_var"))
         finally:
             root.destroy()
 
