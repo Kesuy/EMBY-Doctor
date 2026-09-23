@@ -4,6 +4,8 @@
 
 - Added **重复人物与质检** with duplicate Person comparison, profile completeness scoring, avatar-missing audit, and Provider ID conflict detection.
 - Added safe association migration: move movie People references from the duplicate Person to the selected keep Person without automatically deleting Person entities.
+- Added embedded provider-name identity checks for `javscraper-actress-json`, MetaTube/Gfriends and minnano-av; suspicious single-Person identity mixes are blocked from normal/bulk merge.
+- Added **拆分错误映射**: choose a detected target Person and manually select only the affected movies to migrate, preserving unrelated associations and leaving Person entities/ProviderIds untouched.
 - Added side-by-side Person details with image preview, Provider IDs, association counts, confidence badges, and reversible keep direction.
 - Added a server-wide Person query plus PNG image retrieval to the Emby client.
 - Renamed the project and application from **Emby Media Library Batch Processor** to **EMBY Doctor**.
