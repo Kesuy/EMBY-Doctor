@@ -1042,11 +1042,20 @@ class PeopleQualityTabMixin:
                 known.add(movie_id)
 
         failed_ids = {str(item.get("Id") or "") for item in failed}
-        self.person_associations[duplicate_id] = [
+        remaining = [
             movie
             for movie in associations
             if str(movie.get("Id") or "") in failed_ids
         ]
+        self.person_associations[duplicate_id] = remaining
+
+        # A fully migrated candidate should disappear from the current result
+        # immediately. A fresh scan is still the source of truth from Emby.
+        if not remaining and not failed:
+            candidate = result.get("candidate")
+            self.person_candidates = [
+                item for item in self.person_candidates if item is not candidate
+            ]
 
     def migrate_selected_duplicate(self) -> None:
         candidate = self.people_selected_candidate
