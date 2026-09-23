@@ -163,13 +163,20 @@ class EmbyClient:
             if not items or start >= total:
                 break
 
-    def query_people(self, page_size: int = 500) -> Iterable[dict[str, Any]]:
+    def query_people(
+        self,
+        library_id: str | None = None,
+        page_size: int = 500,
+        person_types: str = "Actor",
+    ) -> Iterable[dict[str, Any]]:
         start = 0
         while True:
             data = self.get_json(
                 "/Persons",
                 {
+                    "ParentId": library_id,
                     "Recursive": "true",
+                    "PersonTypes": person_types,
                     "Fields": "ProviderIds,Overview,SortName,PremiereDate,ProductionYear,ProductionLocations",
                     "EnableImages": "true",
                     "ImageTypeLimit": 1,
