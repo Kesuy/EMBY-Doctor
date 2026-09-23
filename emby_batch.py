@@ -91,6 +91,10 @@ class EmbyClient:
             return {}
         return json.loads(raw.decode("utf-8"))
 
+    def get_bytes(self, path: str, params: dict[str, Any] | None = None) -> bytes:
+        _, raw = self._request("GET", path, params=params)
+        return raw
+
     def list_libraries(self) -> list[dict[str, str]]:
         """Return Emby media libraries as stable ID/name pairs."""
         data = self.get_json("/Library/MediaFolders")
@@ -155,6 +159,31 @@ class EmbyClient:
             total = int(data.get("TotalRecordCount", len(items)))
             for item in items:
                 yield item
+            start += len(items)
+            if not items or start >= total:
+                break
+
+    def query_people(self, page_size: int = 500) -> Iterable[dict[str, Any]]:
+        start = 0
+        while True:
+            data = self.get_json(
+                "/Persons",
+                {
+                    "Recursive": "true",
+                    "Fields": "ProviderIds,Overview,SortName,PremiereDate,ProductionYear,ProductionLocations",
+                    "EnableImages": "true",
+                    "ImageTypeLimit": 1,
+                    "StartIndex": start,
+                    "Limit": page_size,
+                    "SortBy": "SortName",
+                    "SortOrder": "Ascending",
+                },
+            )
+            items = data.get("Items") or []
+            total = int(data.get("TotalRecordCount", len(items)))
+            for item in items:
+                if item.get("Id"):
+                    yield item
             start += len(items)
             if not items or start >= total:
                 break
