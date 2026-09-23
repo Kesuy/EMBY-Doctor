@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Kesuy"}]
+dependencies = ["Pillow>=10.0"]
 keywords = ["emby", "media-library", "metadata", "batch"]
 classifiers = [
   "Programming Language :: Python :: 3",
