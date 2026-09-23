@@ -7,38 +7,66 @@ from tkinter import messagebox, ttk
 
 from emby_batch import people_of_type, remove_directors
 from emby_gui import APP_TITLE, export_director_csv, media_directory, save_director_backup
+from emby_gui_theme import RoundedButton
 
 
 class DirectorTabMixin:
     def build_director_tab(self) -> None:
-        controls = self.top_controls(
-            self.director_tab,
+        toolbar_card = self.make_card(self.director_tab)
+        toolbar_card.pack(fill="x", pady=(0, 10))
+        toolbar = ttk.Frame(toolbar_card, style="Card.TFrame", padding=(14, 12))
+        toolbar.pack(fill="both", expand=True)
+
+        ttk.Label(toolbar, text="处理范围", style="Section.TLabel").pack(anchor="w", pady=(0, 8))
+        self.top_controls(
+            toolbar,
+            "delete_directors",
             self.director_lib_var,
+            self.director_lib_name_var,
             self.director_scope_var,
         )
-        b_scan = ttk.Button(controls, text="扫描预览", command=self.scan_directors)
-        b_scan.pack(side="left", padx=3)
-        b_exec = ttk.Button(controls, text="执行删除", command=self.execute_directors)
-        b_exec.pack(side="left", padx=3)
-        b_csv = ttk.Button(controls, text="导出 CSV", command=self.export_directors)
-        b_csv.pack(side="left", padx=3)
-        b_clear = ttk.Button(controls, text="清空列表", command=lambda: self.clear_tree(self.director_tree))
-        b_clear.pack(side="left", padx=3)
+
+        actions = ttk.Frame(toolbar, style="Card.TFrame")
+        actions.pack(fill="x", pady=(4, 0))
+        ttk.Label(
+            actions,
+            text="执行前会自动备份完整影片元数据；若 NFO 仍含 <director>，后续刷新可能重新导入。",
+            style="Muted.TLabel",
+        ).pack(side="left", fill="x", expand=True)
+
+        b_clear = RoundedButton(
+            actions,
+            text="清空列表",
+            variant="ghost",
+            command=lambda: self.clear_tree(self.director_tree),
+        )
+        b_clear.pack(side="right")
+        b_csv = RoundedButton(actions, text="导出 CSV", variant="secondary", command=self.export_directors)
+        b_csv.pack(side="right", padx=(0, 6))
+        b_exec = RoundedButton(actions, text="执行删除", variant="danger", command=self.execute_directors)
+        b_exec.pack(side="right", padx=(0, 6))
+        b_scan = RoundedButton(actions, text="扫描预览", variant="primary", command=self.scan_directors)
+        b_scan.pack(side="right", padx=(0, 6))
         self.action_buttons.extend([b_scan, b_exec, b_csv, b_clear])
 
-        ttk.Label(
-            self.director_tab,
-            text="执行删除前会把完整影片元数据备份到 EXE 同目录的 backups 文件夹。若 NFO 仍含 <director>，刷新元数据后可能再次导入。",
-        ).pack(fill="x", pady=(0, 6))
+        result_card = self.make_card(self.director_tab)
+        result_card.pack(fill="both", expand=True)
+        result = ttk.Frame(result_card, style="Card.TFrame", padding=(14, 12))
+        result.pack(fill="both", expand=True)
+
+        result_head = ttk.Frame(result, style="Card.TFrame")
+        result_head.pack(fill="x", pady=(0, 8))
+        ttk.Label(result_head, text="导演信息列表", style="Section.TLabel").pack(side="left")
+        ttk.Label(result_head, textvariable=self.director_result_var, style="Muted.TLabel").pack(side="right")
 
         self.director_tree = self.make_tree(
-            self.director_tab,
+            result,
             [
-                ("name", "影片", 170),
+                ("name", "影片", 180),
                 ("id", "Item ID", 110),
-                ("directors", "导演", 170),
-                ("path", "文件路径", 300),
-                ("directory", "影片所在目录", 300),
+                ("directors", "导演", 180),
+                ("path", "文件路径", 310),
+                ("directory", "影片所在目录", 310),
                 ("status", "状态", 110),
             ],
         )
@@ -92,6 +120,7 @@ class DirectorTabMixin:
                         row["Status"],
                     ),
                 )
+            self.refresh_result_counts()
             self.status_var.set(f"导演信息扫描完成：{len(rows)} 部影片")
 
         self.run_job("正在扫描导演信息……", worker, done)
@@ -161,6 +190,7 @@ class DirectorTabMixin:
             msg = f"导演信息删除完成：成功 {ok}/{len(rows_result)}"
             if backup_path:
                 msg += f"；备份：{backup_path}"
+            self.refresh_result_counts()
             self.status_var.set(msg)
             if backup_path:
                 messagebox.showinfo(APP_TITLE, f"处理完成。\n\n备份文件：\n{backup_path}")

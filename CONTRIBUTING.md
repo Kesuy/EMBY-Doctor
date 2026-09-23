@@ -1,4 +1,4 @@
-# Contributing
+# Contributing to EMBY Doctor
 
 1. 从 `main` 创建功能分支。
 2. 修改代码并运行 `python -m unittest discover -s tests -v`。

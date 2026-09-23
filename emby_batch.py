@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""Emby Media Library Batch Processor.
+"""EMBY Doctor.
 
 Batch utilities for selected Emby libraries:
 1. Delete Primary images for actors appearing in the selected libraries.
@@ -65,7 +65,7 @@ class EmbyClient:
         headers = {
             "X-Emby-Token": self.api_key,
             "Accept": "application/json",
-            "User-Agent": f"EmbyMediaLibraryBatchProcessor/{__version__}",
+            "User-Agent": f"EMBY-Doctor/{__version__}",
         }
         if data is not None:
             body = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -90,6 +90,22 @@ class EmbyClient:
         if not raw:
             return {}
         return json.loads(raw.decode("utf-8"))
+
+    def get_bytes(self, path: str, params: dict[str, Any] | None = None) -> bytes:
+        _, raw = self._request("GET", path, params=params)
+        return raw
+
+    def list_libraries(self) -> list[dict[str, str]]:
+        """Return Emby media libraries as stable ID/name pairs."""
+        data = self.get_json("/Library/MediaFolders")
+        libraries: list[dict[str, str]] = []
+        for item in data.get("Items") or []:
+            library_id = str(item.get("Id") or "").strip()
+            if not library_id:
+                continue
+            name = str(item.get("Name") or "").strip() or library_id
+            libraries.append({"Id": library_id, "Name": name})
+        return sorted(libraries, key=lambda item: item["Name"].casefold())
 
     def post_json(self, path: str, data: dict[str, Any]) -> int:
         status, _ = self._request("POST", path, data=data)
@@ -143,6 +159,38 @@ class EmbyClient:
             total = int(data.get("TotalRecordCount", len(items)))
             for item in items:
                 yield item
+            start += len(items)
+            if not items or start >= total:
+                break
+
+    def query_people(
+        self,
+        library_id: str | None = None,
+        page_size: int = 500,
+        person_types: str = "Actor",
+    ) -> Iterable[dict[str, Any]]:
+        start = 0
+        while True:
+            data = self.get_json(
+                "/Persons",
+                {
+                    "ParentId": library_id,
+                    "Recursive": "true",
+                    "PersonTypes": person_types,
+                    "Fields": "ProviderIds,Overview,SortName,PremiereDate,ProductionYear,ProductionLocations",
+                    "EnableImages": "true",
+                    "ImageTypeLimit": 1,
+                    "StartIndex": start,
+                    "Limit": page_size,
+                    "SortBy": "SortName",
+                    "SortOrder": "Ascending",
+                },
+            )
+            items = data.get("Items") or []
+            total = int(data.get("TotalRecordCount", len(items)))
+            for item in items:
+                if item.get("Id"):
+                    yield item
             start += len(items)
             if not items or start >= total:
                 break
@@ -448,8 +496,8 @@ def add_connection_args(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="emby-batch",
-        description="Emby Media Library Batch Processor",
+        prog="emby-doctor",
+        description="EMBY Doctor",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command")
@@ -476,7 +524,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def interactive_args(parser: argparse.ArgumentParser) -> list[str]:
-    print("Emby Media Library Batch Processor")
+    print("EMBY Doctor")
     print("1. 删除指定媒体库演员头像")
     print("2. 扫描没有演员信息的影片")
     print("3. 删除指定媒体库影片导演信息")

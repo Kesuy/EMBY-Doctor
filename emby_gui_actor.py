@@ -5,33 +5,65 @@ from typing import Any
 from tkinter import messagebox, ttk
 
 from emby_gui import APP_TITLE, export_actor_csv, media_directory
+from emby_gui_theme import RoundedButton
 
 
 class ActorTabMixin:
     def build_actor_tab(self) -> None:
-        controls = self.top_controls(self.actor_tab, self.actor_lib_var, self.actor_scope_var)
-        b_scan = ttk.Button(controls, text="扫描预览", command=self.scan_actor_images)
-        b_scan.pack(side="left", padx=3)
-        b_exec = ttk.Button(controls, text="执行删除", command=self.execute_actor_images)
-        b_exec.pack(side="left", padx=3)
-        b_csv = ttk.Button(controls, text="导出 CSV", command=self.export_actor_rows)
-        b_csv.pack(side="left", padx=3)
-        b_clear = ttk.Button(controls, text="清空列表", command=lambda: self.clear_tree(self.actor_tree))
-        b_clear.pack(side="left", padx=3)
+        toolbar_card = self.make_card(self.actor_tab)
+        toolbar_card.pack(fill="x", pady=(0, 10))
+        toolbar = ttk.Frame(toolbar_card, style="Card.TFrame", padding=(14, 12))
+        toolbar.pack(fill="both", expand=True)
+
+        ttk.Label(toolbar, text="处理范围", style="Section.TLabel").pack(anchor="w", pady=(0, 8))
+        self.top_controls(
+            toolbar,
+            "delete_actor_images",
+            self.actor_lib_var,
+            self.actor_lib_name_var,
+            self.actor_scope_var,
+        )
+
+        actions = ttk.Frame(toolbar, style="Card.TFrame")
+        actions.pack(fill="x", pady=(4, 0))
+        ttk.Label(
+            actions,
+            text="注意：Emby 的 Person 为全局共享对象，删除头像会影响其他媒体库中的同一演员。",
+            style="Muted.TLabel",
+        ).pack(side="left", fill="x", expand=True)
+
+        b_clear = RoundedButton(
+            actions,
+            text="清空列表",
+            variant="ghost",
+            command=lambda: self.clear_tree(self.actor_tree),
+        )
+        b_clear.pack(side="right")
+        b_csv = RoundedButton(actions, text="导出 CSV", variant="secondary", command=self.export_actor_rows)
+        b_csv.pack(side="right", padx=(0, 6))
+        b_exec = RoundedButton(actions, text="执行删除", variant="danger", command=self.execute_actor_images)
+        b_exec.pack(side="right", padx=(0, 6))
+        b_scan = RoundedButton(actions, text="扫描预览", variant="primary", command=self.scan_actor_images)
+        b_scan.pack(side="right", padx=(0, 6))
         self.action_buttons.extend([b_scan, b_exec, b_csv, b_clear])
 
-        ttk.Label(
-            self.actor_tab,
-            text="注意：Emby 演员 Person 是全局共享对象；删除头像后，同一演员在其他媒体库中的头像也会消失。",
-        ).pack(fill="x", pady=(0, 6))
+        result_card = self.make_card(self.actor_tab)
+        result_card.pack(fill="both", expand=True)
+        result = ttk.Frame(result_card, style="Card.TFrame", padding=(14, 12))
+        result.pack(fill="both", expand=True)
+
+        result_head = ttk.Frame(result, style="Card.TFrame")
+        result_head.pack(fill="x", pady=(0, 8))
+        ttk.Label(result_head, text="扫描结果", style="Section.TLabel").pack(side="left")
+        ttk.Label(result_head, textvariable=self.actor_result_var, style="Muted.TLabel").pack(side="right")
 
         self.actor_tree = self.make_tree(
-            self.actor_tab,
+            result,
             [
                 ("name", "演员", 180),
                 ("id", "Person ID", 150),
-                ("directory", "影片所在目录", 520),
-                ("status", "状态", 150),
+                ("directory", "影片所在目录", 560),
+                ("status", "状态", 140),
             ],
         )
 
@@ -85,6 +117,7 @@ class ActorTabMixin:
                     iid=row["Id"],
                     values=(row["Name"], row["Id"], row["Directory"], row["Status"]),
                 )
+            self.refresh_result_counts()
             self.status_var.set(f"演员头像扫描完成：{len(rows)} 个")
 
         self.run_job("正在扫描演员头像及关联影片目录……", worker, done)
@@ -124,6 +157,7 @@ class ActorTabMixin:
                         values=(row["Name"], row["Id"], row["Directory"], row["Status"]),
                     )
             ok = sum(1 for x in result if x["Status"] == "已删除")
+            self.refresh_result_counts()
             self.status_var.set(f"演员头像删除完成：成功 {ok}/{len(result)}")
 
         self.run_job("正在删除演员头像……", worker, done)

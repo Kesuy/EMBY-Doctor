@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""GUI entry and local persistence helpers for Emby Media Library Batch Processor."""
+"""GUI entry and local persistence helpers for EMBY Doctor."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from typing import Any
 
 from emby_batch import __version__, timestamp
 
-APP_TITLE = "Emby 媒体库批处理"
+APP_TITLE = "EMBY Doctor"
 SETTINGS_FILE = "settings.json"
 
 
@@ -99,11 +99,19 @@ def default_settings() -> dict[str, Any]:
         "libraries": {
             "delete_actor_images": "",
             "scan_missing_actors": "",
+            "people_quality": "",
             "delete_directors": "",
+        },
+        "library_names": {
+            "delete_actor_images": {},
+            "scan_missing_actors": {},
+            "people_quality": {},
+            "delete_directors": {},
         },
         "scopes": {
             "delete_actor_images": "selected",
             "scan_missing_actors": "selected",
+            "people_quality": "selected",
             "delete_directors": "selected",
         },
         "scan_missing_actors": {
@@ -123,7 +131,14 @@ def load_settings() -> dict[str, Any]:
         return cfg
 
     if isinstance(loaded, dict):
-        for section in ("connection", "paths", "libraries", "scopes", "scan_missing_actors"):
+        for section in (
+            "connection",
+            "paths",
+            "libraries",
+            "library_names",
+            "scopes",
+            "scan_missing_actors",
+        ):
             value = loaded.get(section)
             if isinstance(value, dict):
                 cfg[section].update(value)
@@ -178,7 +193,7 @@ def export_missing_csv(rows: list[dict[str, Any]]) -> Path:
     return export_rows_csv(
         "emby_movies_without_actors",
         [
-            ("媒体库 ID", "LibraryId"),
+            ("媒体库", "LibraryId"),
             ("Item ID", "Id"),
             ("影片", "Name"),
             ("文件路径", "Path"),
@@ -221,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if "--version" in args or "-V" in args:
         if sys.stdout is not None:
-            print(f"Emby Media Library Batch Processor {__version__}")
+            print(f"EMBY Doctor {__version__}")
         return 0
 
     try:

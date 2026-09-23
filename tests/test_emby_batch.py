@@ -1,3 +1,4 @@
+import sys
 import unittest
 
 from emby_batch import (
@@ -7,6 +8,14 @@ from emby_batch import (
     parse_library_ids,
     people_of_type,
     remove_directors,
+)
+from emby_people import (
+    build_duplicate_candidates,
+    find_person_identity_anomalies,
+    normalize_person_name,
+    person_completeness,
+    provider_identity_hints,
+    replace_person_reference,
 )
 
 
@@ -37,6 +46,28 @@ class PureFunctionTests(unittest.TestCase):
         self.assertEqual(params["ReplaceAllMetadata"], "true")
         self.assertEqual(params["ReplaceAllImages"], "false")
         self.assertIsNone(data)
+
+    def test_list_libraries_returns_sorted_id_name_pairs(self):
+        class RecordingClient(EmbyClient):
+            def get_json(self, path, params=None):
+                self.assert_path = path
+                return {
+                    "Items": [
+                        {"Id": "2", "Name": "电视剧"},
+                        {"Id": "1", "Name": "电影"},
+                        {"Id": "", "Name": "忽略"},
+                    ]
+                }
+
+        c = RecordingClient("http://localhost:8096", "x")
+        self.assertEqual(
+            c.list_libraries(),
+            [
+                {"Id": "1", "Name": "电影"},
+                {"Id": "2", "Name": "电视剧"},
+            ],
+        )
+        self.assertEqual(c.assert_path, "/Library/MediaFolders")
 
     def test_parse_library_ids(self):
         self.assertEqual(parse_library_ids(["1,2", "2", " 3 "]), ["1", "2", "3"])
@@ -69,6 +100,132 @@ class PureFunctionTests(unittest.TestCase):
         self.assertNotIn("UserData", updated)
         self.assertEqual(len(original["People"]), 3)
 
+    def test_query_people_pages_and_requests_profile_fields(self):
+        calls = []
+
+        class RecordingClient(EmbyClient):
+            def get_json(self, path, params=None):
+                calls.append((path, dict(params or {})))
+                start = int((params or {}).get("StartIndex", 0))
+                if start == 0:
+                    return {
+                        "Items": [{"Id": "10", "Name": "A"}, {"Id": "11", "Name": "B"}],
+                        "TotalRecordCount": 3,
+                    }
+                return {
+                    "Items": [{"Id": "12", "Name": "C"}],
+                    "TotalRecordCount": 3,
+                }
+
+        c = RecordingClient("http://localhost:8096", "x")
+        rows = list(c.query_people(page_size=2))
+        self.assertEqual([row["Id"] for row in rows], ["10", "11", "12"])
+        self.assertEqual(calls[0][0], "/Persons")
+        self.assertIsNone(calls[0][1]["ParentId"])
+        self.assertEqual(calls[0][1]["PersonTypes"], "Actor")
+        self.assertIn("ProviderIds", calls[0][1]["Fields"])
+        self.assertTrue(calls[0][1]["EnableImages"])
+
+        calls.clear()
+        rows = list(c.query_people("lib-1", page_size=2))
+        self.assertEqual([row["Id"] for row in rows], ["10", "11", "12"])
+        self.assertEqual(calls[0][1]["ParentId"], "lib-1")
+
+    def test_duplicate_people_detects_same_name_and_prefers_more_complete_profile(self):
+        persons = [
+            {
+                "Id": "1",
+                "Name": "横山 みれい",
+                "ProviderIds": {"Tmdb": "100"},
+                "PrimaryImageTag": "img",
+                "Overview": "bio",
+            },
+            {
+                "Id": "2",
+                "Name": "横山みれい",
+                "ProviderIds": {"MetaTube": "abc"},
+            },
+        ]
+        candidates = build_duplicate_candidates(persons, {"1": 8, "2": 1})
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["Confidence"], 90)
+        self.assertEqual(candidates[0]["Left"]["Id"], "1")
+        self.assertEqual(candidates[0]["Right"]["Id"], "2")
+        self.assertGreater(
+            person_completeness(candidates[0]["Left"], 8),
+            person_completeness(candidates[0]["Right"], 1),
+        )
+        self.assertEqual(normalize_person_name("横山 みれい"), normalize_person_name("横山みれい"))
+
+    def test_duplicate_people_shared_provider_id_has_highest_confidence(self):
+        persons = [
+            {"Id": "1", "Name": "Alice A", "ProviderIds": {"Tmdb": "123"}},
+            {"Id": "2", "Name": "Alice B", "ProviderIds": {"Tmdb": "123"}},
+        ]
+        candidates = build_duplicate_candidates(persons)
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["Confidence"], 100)
+        self.assertEqual(candidates[0]["Reason"], "Provider ID 一致")
+
+
+    def test_provider_identity_hints_detect_embedded_actor_names(self):
+        person = {
+            "Id": "63332",
+            "Name": "葉月奈穂",
+            "ProviderIds": {
+                "javscraper-actress-json": '{"Provider":"JavScraper.Xslist","Name":"Tomoe Nakamura - 中村知恵"}',
+                "MetaTube": "Gfriends:%E8%A5%BF%E5%B1%B1%E3%81%82%E3%81%95%E3%81%B2",
+                "minnano-av": "actress528044.html?%E8%A5%BF%E5%B1%B1%E3%81%82%E3%81%95%E3%81%B2",
+            },
+        }
+        hints = provider_identity_hints(person)
+        identities = {hint["Identity"] for hint in hints}
+        self.assertIn("中村知恵", identities)
+        self.assertIn("西山あさひ", identities)
+
+        anomalies = find_person_identity_anomalies([person])
+        self.assertEqual(len(anomalies), 1)
+        self.assertEqual(anomalies[0]["Risk"], "高")
+        self.assertIn("中村知恵", anomalies[0]["Summary"])
+        self.assertIn("西山あさひ", anomalies[0]["Summary"])
+
+    def test_identity_hint_matching_alias_in_display_name_is_not_flagged(self):
+        person = {
+            "Id": "52027",
+            "Name": "葉月奈穂（葉月菜穂）",
+            "ProviderIds": {
+                "javscraper-actress-json": '{"Provider":"JavScraper.Xslist","Name":"Naho Hatzuki - 葉月奈穂"}',
+                "javscraper-actress": "https://raw.githubusercontent.com/example/AI-Fix-%E8%91%89%E6%9C%88%E5%A5%88%E7%A9%82.jpg",
+            },
+        }
+        self.assertEqual(find_person_identity_anomalies([person]), [])
+
+    def test_replace_person_reference_preserves_roles_and_deduplicates(self):
+        original = {
+            "Name": "Movie",
+            "People": [
+                {"Id": "2", "Name": "重复人物", "Type": "Actor", "Role": "A"},
+                {"Id": "1", "Name": "保留人物", "Type": "Actor", "Role": "A"},
+                {"Id": "2", "Name": "重复人物", "Type": "Actor", "Role": "B"},
+                {"Id": "9", "Name": "导演", "Type": "Director", "Role": ""},
+            ],
+            "UserData": {"Played": True},
+        }
+        updated, replaced = replace_person_reference(
+            original,
+            {"Id": "2", "Name": "重复人物"},
+            {"Id": "1", "Name": "保留人物"},
+        )
+        self.assertEqual(replaced, 2)
+        actors = people_of_type(updated, "Actor")
+        self.assertEqual(
+            [(p["Id"], p["Name"], p["Role"]) for p in actors],
+            [("1", "保留人物", "A"), ("1", "保留人物", "B")],
+        )
+        self.assertEqual(len(people_of_type(updated, "Director")), 1)
+        self.assertNotIn("UserData", updated)
+        self.assertEqual(original["People"][0]["Id"], "2")
+
 
 class GuiConfigurationTests(unittest.TestCase):
     def test_default_gui_settings_have_independent_library_ids(self):
@@ -77,9 +234,16 @@ class GuiConfigurationTests(unittest.TestCase):
         cfg = default_settings()
         libs = cfg["libraries"]
         scopes = cfg["scopes"]
-        expected = {"delete_actor_images", "scan_missing_actors", "delete_directors"}
+        expected = {
+            "delete_actor_images",
+            "scan_missing_actors",
+            "people_quality",
+            "delete_directors",
+        }
         self.assertEqual(set(libs), expected)
         self.assertEqual(set(scopes), expected)
+        self.assertEqual(set(cfg["library_names"]), expected)
+        self.assertTrue(all(cfg["library_names"][key] == {} for key in expected))
         self.assertTrue(all(scopes[key] == "selected" for key in expected))
         self.assertTrue(cfg["connection"]["verify_ssl"])
         self.assertEqual(cfg["paths"]["directory_prefix"], "")
@@ -128,6 +292,52 @@ class GuiConfigurationTests(unittest.TestCase):
         from emby_gui import main
 
         self.assertEqual(main(["--version"]), 0)
+
+    @unittest.skipUnless(sys.platform == "win32", "Tk window construction smoke test is Windows-only")
+    def test_gui_constructs_with_people_quality_page(self):
+        import tkinter as tk
+
+        from emby_gui_app import EmbyBatchApp
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            app = EmbyBatchApp(root)
+            self.assertIn("people", app.page_frames)
+            self.assertIn("people", app.nav_buttons)
+            self.assertTrue(hasattr(app, "duplicate_tree"))
+            self.assertTrue(hasattr(app, "avatar_tree"))
+            self.assertTrue(hasattr(app, "conflict_tree"))
+            self.assertTrue(hasattr(app, "people_lib_var"))
+            self.assertTrue(hasattr(app, "people_scope_var"))
+            self.assertTrue(hasattr(app, "people_exact_name_only_var"))
+            self.assertTrue(hasattr(app, "people_score_100_only_var"))
+            self.assertTrue(hasattr(app, "people_provider_match_only_var"))
+            self.assertTrue(hasattr(app, "bulk_merge_button"))
+
+            app.person_candidates = [
+                {
+                    "Left": {"Id": "1", "Name": "同名"},
+                    "Right": {"Id": "2", "Name": "同名"},
+                    "Confidence": 100,
+                    "Reason": "Provider ID 一致",
+                    "Conflicts": [],
+                },
+                {
+                    "Left": {"Id": "3", "Name": "A"},
+                    "Right": {"Id": "4", "Name": "B"},
+                    "Confidence": 90,
+                    "Reason": "姓名完全一致",
+                    "Conflicts": [],
+                },
+            ]
+            app.people_exact_name_only_var.set(True)
+            self.assertEqual(len(app.visible_people_candidates()), 1)
+            app.people_score_100_only_var.set(True)
+            app.people_provider_match_only_var.set(True)
+            self.assertEqual(len(app.visible_people_candidates()), 1)
+        finally:
+            root.destroy()
 
 
 if __name__ == "__main__":

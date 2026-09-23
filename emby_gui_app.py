@@ -18,6 +18,27 @@ from emby_gui import (
     settings_path,
 )
 
+from emby_gui_theme import (
+    BG,
+    SIDEBAR,
+    HEADER,
+    CARD,
+    BORDER,
+    TEXT,
+    MUTED,
+    PRIMARY,
+    PRIMARY_ACTIVE,
+    PRIMARY_SOFT,
+    SUCCESS,
+    WARNING,
+    DANGER,
+    AutoHideScrollbar,
+    RoundedButton,
+    RoundedContainer,
+    RoundedEntry,
+    apply_theme,
+)
+
 
 def tree_sort_key(value: Any) -> tuple[int, Any]:
     """Return a stable, user-friendly sort key for Treeview cell values."""
@@ -31,14 +52,20 @@ def tree_sort_key(value: Any) -> tuple[int, Any]:
 from emby_gui_actor import ActorTabMixin
 from emby_gui_director import DirectorTabMixin
 from emby_gui_missing import MissingActorsTabMixin
+from emby_gui_people import PeopleQualityTabMixin
 
 
-class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
+class EmbyBatchApp(
+    ActorTabMixin,
+    MissingActorsTabMixin,
+    DirectorTabMixin,
+    PeopleQualityTabMixin,
+):
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title(f"{APP_TITLE}  v{__version__}")
-        self.root.geometry("1100x720")
-        self.root.minsize(900, 600)
+        self.root.geometry("1380x840")
+        self.root.minsize(1160, 700)
         self.logo_image: tk.PhotoImage | None = None
         self.apply_branding()
 
@@ -47,7 +74,10 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         self.actor_rows: list[dict[str, Any]] = []
         self.missing_rows: list[dict[str, Any]] = []
         self.director_rows: list[dict[str, Any]] = []
-        self.action_buttons: list[ttk.Button] = []
+        self.action_buttons: list[Any] = []
+        self.scope_sync_callbacks: list[Callable[[], None]] = []
+        self.library_dropdown_popup: tk.Toplevel | None = None
+        self.library_dropdown_root_click_bind: str | None = None
 
         self.url_var = tk.StringVar(value=str(self.settings["connection"].get("url") or ""))
         self.api_key_var = tk.StringVar(value=str(self.settings["connection"].get("api_key") or ""))
@@ -56,21 +86,61 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
         self.timeout_var = tk.StringVar(value=str(self.settings["connection"].get("timeout", 60)))
 
         libs = self.settings["libraries"]
+        library_names = self.settings.get("library_names") or {}
         scopes = self.settings["scopes"]
         paths = self.settings["paths"]
         self.actor_lib_var = tk.StringVar(value=str(libs.get("delete_actor_images") or ""))
         self.missing_lib_var = tk.StringVar(value=str(libs.get("scan_missing_actors") or ""))
+        self.people_lib_var = tk.StringVar(value=str(libs.get("people_quality") or ""))
         self.director_lib_var = tk.StringVar(value=str(libs.get("delete_directors") or ""))
+        self.library_name_maps: dict[str, dict[str, str]] = {}
+        for key in ("delete_actor_images", "scan_missing_actors", "people_quality", "delete_directors"):
+            raw_names = library_names.get(key) if isinstance(library_names, dict) else {}
+            if not isinstance(raw_names, dict):
+                raw_names = {}
+            self.library_name_maps[key] = {
+                str(library_id): str(name)
+                for library_id, name in raw_names.items()
+                if str(library_id).strip() and str(name).strip()
+            }
+        self.actor_lib_name_var = tk.StringVar(
+            value=self.library_selection_text("delete_actor_images", self.actor_lib_var.get())
+        )
+        self.missing_lib_name_var = tk.StringVar(
+            value=self.library_selection_text("scan_missing_actors", self.missing_lib_var.get())
+        )
+        self.people_lib_name_var = tk.StringVar(
+            value=self.library_selection_text("people_quality", self.people_lib_var.get())
+        )
+        self.director_lib_name_var = tk.StringVar(
+            value=self.library_selection_text("delete_directors", self.director_lib_var.get())
+        )
         self.actor_scope_var = tk.StringVar(value=self.normalize_scope(scopes.get("delete_actor_images")))
         self.missing_scope_var = tk.StringVar(value=self.normalize_scope(scopes.get("scan_missing_actors")))
+        self.people_scope_var = tk.StringVar(value=self.normalize_scope(scopes.get("people_quality")))
         self.director_scope_var = tk.StringVar(value=self.normalize_scope(scopes.get("delete_directors")))
         self.include_video_var = tk.BooleanVar(
             value=bool(self.settings["scan_missing_actors"].get("include_video", False))
         )
         self.directory_prefix_var = tk.StringVar(value=str(paths.get("directory_prefix") or ""))
         self.status_var = tk.StringVar(value=f"设置文件：{settings_path()}")
+        self.connection_status_var = tk.StringVar(value="未测试连接")
+        self.sidebar_status_var = tk.StringVar(value="就绪")
+        self.page_title_var = tk.StringVar(value="演员头像清理")
+        self.page_subtitle_var = tk.StringVar(
+            value="扫描指定媒体库中的演员头像，预览确认后再执行清理。"
+        )
+        self.actor_result_var = tk.StringVar(value="0 条")
+        self.missing_result_var = tk.StringVar(value="0 部")
+        self.director_result_var = tk.StringVar(value="0 部")
+        self.nav_buttons: dict[str, tk.Button] = {}
+        self.page_frames: dict[str, tk.Frame] = {}
+        self.current_page = "actor"
+        self.sidebar_logo: tk.PhotoImage | None = None
 
         self.build_ui()
+        self.root.bind("<Configure>", self.on_root_configure, add="+")
+        self.root.bind("<Unmap>", lambda _event: self.close_library_dropdown(), add="+")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def apply_branding(self) -> None:
@@ -81,67 +151,366 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
             self.logo_image = None
 
     def build_ui(self) -> None:
-        outer = ttk.Frame(self.root, padding=10)
-        outer.pack(fill="both", expand=True)
+        apply_theme(self.root)
 
-        conn = ttk.LabelFrame(outer, text="Emby 通用连接设置", padding=10)
-        conn.pack(fill="x")
-        conn.columnconfigure(1, weight=1)
-        conn.columnconfigure(3, weight=1)
+        shell = tk.Frame(self.root, background=BG, bd=0)
+        shell.pack(fill="both", expand=True)
 
-        ttk.Label(conn, text="Emby 地址").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=4)
-        ttk.Entry(conn, textvariable=self.url_var).grid(row=0, column=1, sticky="ew", pady=4)
-        ttk.Label(conn, text="API Key").grid(row=0, column=2, sticky="w", padx=(12, 6), pady=4)
-        self.api_entry = ttk.Entry(conn, textvariable=self.api_key_var, show="●")
-        self.api_entry.grid(row=0, column=3, sticky="ew", pady=4)
-
-        ttk.Checkbutton(
-            conn,
-            text="显示 API Key",
-            variable=self.show_key_var,
-            command=lambda: self.api_entry.configure(show="" if self.show_key_var.get() else "●"),
-        ).grid(row=1, column=0, sticky="w", pady=4)
-        ttk.Checkbutton(conn, text="校验 HTTPS 证书", variable=self.verify_ssl_var).grid(
-            row=1, column=1, sticky="w", pady=4
+        sidebar = tk.Frame(
+            shell,
+            background=SIDEBAR,
+            width=218,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=BORDER,
         )
-        ttk.Label(conn, text="超时(秒)").grid(row=1, column=2, sticky="e", padx=(12, 6), pady=4)
-        ttk.Entry(conn, textvariable=self.timeout_var, width=8).grid(row=1, column=3, sticky="w", pady=4)
+        sidebar.pack(side="left", fill="y")
+        sidebar.pack_propagate(False)
 
-        ttk.Label(conn, text="打开目录路径前缀").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=4)
-        ttk.Entry(conn, textvariable=self.directory_prefix_var).grid(
-            row=2, column=1, columnspan=3, sticky="ew", pady=4
+        brand = tk.Frame(sidebar, background=SIDEBAR, bd=0)
+        brand.pack(fill="x", padx=16, pady=(18, 18))
+        if self.logo_image is not None:
+            try:
+                width = max(1, int(self.logo_image.width()))
+                factor = max(1, (width + 31) // 32)
+                self.sidebar_logo = self.logo_image.subsample(factor, factor)
+            except Exception:
+                self.sidebar_logo = self.logo_image
+        if self.sidebar_logo is not None:
+            tk.Label(
+                brand,
+                image=self.sidebar_logo,
+                background=SIDEBAR,
+                bd=0,
+            ).pack(side="left", padx=(0, 10))
+        brand_text = tk.Frame(brand, background=SIDEBAR, bd=0)
+        brand_text.pack(side="left", fill="x", expand=True)
+        tk.Label(
+            brand_text,
+            text="EMBY Doctor",
+            background=SIDEBAR,
+            foreground=TEXT,
+            font=("Microsoft YaHei UI", 14, "bold"),
+            anchor="w",
+        ).pack(fill="x")
+        tk.Label(
+            brand_text,
+            text="Emby 媒体库维护工具",
+            background=SIDEBAR,
+            foreground=MUTED,
+            font=("Microsoft YaHei UI", 8),
+            anchor="w",
+        ).pack(fill="x", pady=(2, 0))
+
+        tk.Label(
+            sidebar,
+            text="功能导航",
+            background=SIDEBAR,
+            foreground="#8A97A8",
+            font=("Microsoft YaHei UI", 8),
+            anchor="w",
+        ).pack(fill="x", padx=18, pady=(2, 6))
+
+        self._build_nav_button(sidebar, "actor", "演员头像清理")
+        self._build_nav_button(sidebar, "missing", "无演员影片扫描")
+        self._build_nav_button(sidebar, "people", "重复人物与质检")
+        self._build_nav_button(sidebar, "director", "导演信息清理")
+
+        tk.Label(
+            sidebar,
+            text="系统状态",
+            background=SIDEBAR,
+            foreground="#8A97A8",
+            font=("Microsoft YaHei UI", 8),
+            anchor="w",
+        ).pack(fill="x", padx=18, pady=(22, 6))
+
+        status_card = tk.Frame(
+            sidebar,
+            background="#FFFFFF",
+            highlightbackground=BORDER,
+            highlightthickness=1,
+            bd=0,
         )
+        status_card.pack(fill="x", padx=12, pady=(0, 10))
+        tk.Label(
+            status_card,
+            text="●",
+            background="#FFFFFF",
+            foreground=SUCCESS,
+            font=("Microsoft YaHei UI", 9),
+        ).grid(row=0, column=0, padx=(10, 5), pady=(10, 3), sticky="w")
+        tk.Label(
+            status_card,
+            textvariable=self.sidebar_status_var,
+            background="#FFFFFF",
+            foreground=TEXT,
+            font=("Microsoft YaHei UI", 9, "bold"),
+            anchor="w",
+        ).grid(row=0, column=1, padx=(0, 10), pady=(10, 3), sticky="w")
+        tk.Label(
+            status_card,
+            textvariable=self.connection_status_var,
+            background="#FFFFFF",
+            foreground=MUTED,
+            font=("Microsoft YaHei UI", 8),
+            anchor="w",
+            justify="left",
+            wraplength=170,
+        ).grid(row=1, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="w")
+
+        sidebar_footer = tk.Frame(sidebar, background=SIDEBAR, bd=0)
+        sidebar_footer.pack(side="bottom", fill="x", padx=16, pady=14)
+        tk.Label(
+            sidebar_footer,
+            text=f"版本 v{__version__}",
+            background=SIDEBAR,
+            foreground="#94A0AF",
+            font=("Microsoft YaHei UI", 8),
+            anchor="w",
+        ).pack(fill="x")
+
+        content_area = tk.Frame(shell, background=BG, bd=0)
+        content_area.pack(side="left", fill="both", expand=True)
+
+        header = tk.Frame(
+            content_area,
+            background=HEADER,
+            height=88,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+        )
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        header_left = tk.Frame(header, background=HEADER, bd=0)
+        header_left.pack(side="left", fill="both", expand=True, padx=20, pady=14)
         ttk.Label(
-            conn,
-            text=r"可选，例如 \\192.168.1.10；打开结果目录时会补全为 \\192.168.1.10\结果路径",
-        ).grid(row=3, column=1, columnspan=3, sticky="w", pady=(0, 4))
-
-        btns = ttk.Frame(conn)
-        btns.grid(row=4, column=0, columnspan=4, sticky="e", pady=(8, 0))
-        b_test = ttk.Button(btns, text="测试连接", command=self.test_connection)
-        b_test.pack(side="left", padx=4)
-        b_save = ttk.Button(btns, text="保存设置", command=self.save_all_settings)
-        b_save.pack(side="left", padx=4)
-        self.action_buttons.extend([b_test, b_save])
-
+            header_left,
+            textvariable=self.page_title_var,
+            style="PageTitle.TLabel",
+        ).pack(anchor="w")
         ttk.Label(
-            outer,
-            text="提示：settings.json 会保存在 EXE 同目录，并包含 API Key 明文。请勿将该文件上传或分享。",
-        ).pack(fill="x", pady=(6, 4))
+            header_left,
+            textvariable=self.page_subtitle_var,
+            style="PageSubtitle.TLabel",
+        ).pack(anchor="w", pady=(4, 0))
 
-        notebook = ttk.Notebook(outer)
-        notebook.pack(fill="both", expand=True, pady=(4, 6))
-        self.actor_tab = ttk.Frame(notebook, padding=10)
-        self.missing_tab = ttk.Frame(notebook, padding=10)
-        self.director_tab = ttk.Frame(notebook, padding=10)
-        notebook.add(self.actor_tab, text="删除演员头像")
-        notebook.add(self.missing_tab, text="扫描无演员影片")
-        notebook.add(self.director_tab, text="删除导演信息")
+        header_right = tk.Frame(header, background=HEADER, bd=0)
+        header_right.pack(side="right", padx=20)
+        tk.Label(
+            header_right,
+            text=f"v{__version__}",
+            background=PRIMARY_SOFT,
+            foreground=PRIMARY,
+            font=("Microsoft YaHei UI", 9, "bold"),
+            padx=10,
+            pady=4,
+        ).pack(side="right")
+
+        status_bar = tk.Frame(
+            content_area,
+            background=HEADER,
+            height=30,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+        )
+        status_bar.pack(side="bottom", fill="x")
+        ttk.Label(
+            status_bar,
+            textvariable=self.status_var,
+            style="Status.TLabel",
+            anchor="w",
+        ).pack(side="left", fill="x", expand=True, padx=14, pady=5)
+        ttk.Label(
+            status_bar,
+            text=f"EMBY Doctor · {settings_path().name}",
+            style="Status.TLabel",
+        ).pack(side="right", padx=14, pady=5)
+
+        body = tk.Frame(content_area, background=BG, bd=0)
+        body.pack(fill="both", expand=True, padx=16, pady=14)
+
+        self.connection_card = self._build_connection_card(body)
+        self.connection_card.pack(fill="x", pady=(0, 12))
+
+        self.page_host = tk.Frame(body, background=BG, bd=0)
+        self.page_host.pack(fill="both", expand=True)
+        self.page_host.grid_rowconfigure(0, weight=1)
+        self.page_host.grid_columnconfigure(0, weight=1)
+
+        self.actor_tab = tk.Frame(self.page_host, background=BG, bd=0)
+        self.missing_tab = tk.Frame(self.page_host, background=BG, bd=0)
+        self.people_tab = tk.Frame(self.page_host, background=BG, bd=0)
+        self.director_tab = tk.Frame(self.page_host, background=BG, bd=0)
+        self.page_frames = {
+            "actor": self.actor_tab,
+            "missing": self.missing_tab,
+            "people": self.people_tab,
+            "director": self.director_tab,
+        }
+        for frame in self.page_frames.values():
+            frame.grid(row=0, column=0, sticky="nsew")
 
         self.build_actor_tab()
         self.build_missing_tab()
+        self.build_people_quality_tab()
         self.build_director_tab()
-        ttk.Label(outer, textvariable=self.status_var, anchor="w").pack(fill="x")
+        self.refresh_result_counts()
+        self.show_page("actor")
+
+    def make_card(self, parent: tk.Widget) -> tk.Frame:
+        return tk.Frame(
+            parent,
+            background=CARD,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+        )
+
+    def _build_connection_card(self, parent: tk.Widget) -> tk.Frame:
+        card = self.make_card(parent)
+        inner = ttk.Frame(card, style="Card.TFrame", padding=(14, 10))
+        inner.pack(fill="both", expand=True)
+
+        head = ttk.Frame(inner, style="Card.TFrame")
+        head.pack(fill="x", pady=(0, 9))
+        ttk.Label(head, text="Emby 连接", style="Section.TLabel").pack(side="left")
+        tk.Label(
+            head,
+            textvariable=self.connection_status_var,
+            background="#F3F7FD",
+            foreground=MUTED,
+            font=("Microsoft YaHei UI", 8),
+            padx=9,
+            pady=3,
+        ).pack(side="right")
+
+        row = ttk.Frame(inner, style="Card.TFrame")
+        row.pack(fill="x")
+        row.columnconfigure(0, weight=4)
+        row.columnconfigure(1, weight=4)
+        row.columnconfigure(2, weight=1)
+        row.columnconfigure(3, weight=0)
+
+        address = ttk.Frame(row, style="Card.TFrame")
+        address.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        ttk.Label(address, text="服务器地址", style="Muted.TLabel").pack(anchor="w", pady=(0, 3))
+        RoundedEntry(address, textvariable=self.url_var).pack(fill="x")
+
+        api = ttk.Frame(row, style="Card.TFrame")
+        api.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+        ttk.Label(api, text="API Key", style="Muted.TLabel").pack(anchor="w", pady=(0, 3))
+        self.api_entry = RoundedEntry(api, textvariable=self.api_key_var, show="●")
+        self.api_entry.pack(fill="x")
+
+        timeout = ttk.Frame(row, style="Card.TFrame")
+        timeout.grid(row=0, column=2, sticky="ew", padx=(0, 8))
+        ttk.Label(timeout, text="超时(秒)", style="Muted.TLabel").pack(anchor="w", pady=(0, 3))
+        RoundedEntry(timeout, textvariable=self.timeout_var, width=8).pack(fill="x")
+
+        actions = ttk.Frame(row, style="Card.TFrame")
+        actions.grid(row=0, column=3, sticky="se")
+        b_test = RoundedButton(actions, text="测试连接", variant="primary", command=self.test_connection)
+        b_test.pack(side="left", padx=(0, 6))
+        b_save = RoundedButton(actions, text="保存设置", variant="secondary", command=self.save_all_settings)
+        b_save.pack(side="left")
+        self.action_buttons.extend([b_test, b_save])
+
+        options = ttk.Frame(inner, style="Card.TFrame")
+        options.pack(fill="x", pady=(9, 0))
+        ttk.Checkbutton(
+            options,
+            text="显示 API Key",
+            style="Card.TCheckbutton",
+            variable=self.show_key_var,
+            command=lambda: self.api_entry.configure(show="" if self.show_key_var.get() else "●"),
+        ).pack(side="left")
+        ttk.Checkbutton(
+            options,
+            text="校验 HTTPS 证书",
+            style="Card.TCheckbutton",
+            variable=self.verify_ssl_var,
+        ).pack(side="left", padx=(12, 18))
+        ttk.Label(options, text="目录路径前缀", style="Muted.TLabel").pack(side="left", padx=(0, 6))
+        RoundedEntry(options, textvariable=self.directory_prefix_var).pack(side="left", fill="x", expand=True)
+        ttk.Label(
+            options,
+            text=r"例：\\192.168.1.10",
+            style="Muted.TLabel",
+        ).pack(side="left", padx=(8, 0))
+
+        return card
+
+    def _build_nav_button(self, parent: tk.Widget, key: str, text: str) -> None:
+        button = RoundedButton(
+            parent,
+            text=text,
+            command=lambda current=key: self.show_page(current),
+            variant="ghost",
+            anchor="w",
+            background=SIDEBAR,
+            foreground=TEXT,
+            activebackground=PRIMARY_SOFT,
+            activeforeground=PRIMARY,
+            bordercolor=SIDEBAR,
+            padx=16,
+            height=38,
+            radius=9,
+            font=("Microsoft YaHei UI", 10),
+        )
+        button.pack(fill="x", padx=10, pady=2)
+        self.nav_buttons[key] = button
+
+    def show_page(self, key: str) -> None:
+        titles = {
+            "actor": (
+                "演员头像清理",
+                "扫描指定媒体库中的演员头像，预览确认后再执行清理。",
+            ),
+            "missing": (
+                "无演员影片扫描",
+                "查找没有 Actor 信息的影片，并支持批量刷新元数据。",
+            ),
+            "people": (
+                "重复人物与质检",
+                "按 Provider ID、姓名与资料完整度识别重复 Person，并安全迁移影片关联。",
+            ),
+            "director": (
+                "导演信息清理",
+                "扫描影片 Director 信息，备份后批量移除。",
+            ),
+        }
+        frame = self.page_frames.get(key)
+        if frame is None:
+            return
+        self.current_page = key
+        frame.tkraise()
+        if key == "people":
+            self.connection_card.pack_forget()
+        elif not self.connection_card.winfo_manager():
+            self.connection_card.pack(fill="x", pady=(0, 12), before=self.page_host)
+        title, subtitle = titles[key]
+        self.page_title_var.set(title)
+        self.page_subtitle_var.set(subtitle)
+        self.close_library_dropdown()
+        for nav_key, button in self.nav_buttons.items():
+            active = nav_key == key
+            button.configure(
+                background=PRIMARY if active else SIDEBAR,
+                foreground="#FFFFFF" if active else TEXT,
+                activebackground=PRIMARY_ACTIVE if active else PRIMARY_SOFT,
+                activeforeground="#FFFFFF" if active else PRIMARY,
+                bordercolor=PRIMARY if active else SIDEBAR,
+                font=("Microsoft YaHei UI", 10, "bold" if active else "normal"),
+            )
+
+    def refresh_result_counts(self) -> None:
+        self.actor_result_var.set(f"{len(self.actor_rows)} 条")
+        self.missing_result_var.set(f"{len(self.missing_rows)} 部")
+        self.director_result_var.set(f"{len(self.director_rows)} 部")
 
     @staticmethod
     def normalize_scope(value: Any) -> str:
@@ -150,32 +519,495 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
     def top_controls(
         self,
         parent: ttk.Frame,
+        selection_key: str,
         variable: tk.StringVar,
+        display_var: tk.StringVar,
         scope_var: tk.StringVar,
     ) -> ttk.Frame:
-        frame = ttk.Frame(parent)
+        frame = ttk.Frame(parent, style="Card.TFrame")
         frame.pack(fill="x", pady=(0, 8))
 
-        ttk.Radiobutton(frame, text="全部媒体库", variable=scope_var, value="all").pack(side="left")
-        ttk.Radiobutton(frame, text="指定媒体库", variable=scope_var, value="selected").pack(
-            side="left", padx=(8, 8)
+        ttk.Label(frame, text="媒体库范围", style="Muted.TLabel").pack(side="left", padx=(0, 8))
+        ttk.Radiobutton(
+            frame,
+            text="全部媒体库",
+            style="Card.TRadiobutton",
+            variable=scope_var,
+            value="all",
+        ).pack(side="left")
+        ttk.Radiobutton(
+            frame,
+            text="指定媒体库",
+            style="Card.TRadiobutton",
+            variable=scope_var,
+            value="selected",
+        ).pack(side="left", padx=(8, 8))
+
+        selector_shell = RoundedContainer(
+            frame,
+            height=36,
+            radius=9,
+            background=CARD,
+            bordercolor=BORDER,
+            active_bordercolor=PRIMARY,
         )
-        ttk.Label(frame, text="媒体库 ID").pack(side="left")
-        entry = ttk.Entry(frame, textvariable=variable)
-        entry.pack(side="left", fill="x", expand=True, padx=8)
+        selector_shell.pack(side="left", fill="x", expand=True)
 
-        def sync_scope_entry(*_args: Any) -> None:
-            entry.configure(state="normal" if scope_var.get() == "selected" else "disabled")
+        chip_frame = tk.Frame(selector_shell.content, background=CARD)
+        chip_frame.pack(side="left", fill="x", expand=True, padx=(3, 3), pady=2)
 
-        scope_var.trace_add("write", sync_scope_entry)
-        sync_scope_entry()
+        dropdown_button = RoundedButton(
+            selector_shell.content,
+            text="⌄",
+            width=34,
+            height=28,
+            radius=8,
+            variant="ghost",
+            background=CARD,
+            foreground=MUTED,
+            activebackground=PRIMARY_SOFT,
+            activeforeground=PRIMARY,
+            bordercolor=CARD,
+        )
+        dropdown_button.pack(side="right", padx=(2, 0), pady=0)
+
+        def render_chips(*_args: Any) -> None:
+            for child in chip_frame.winfo_children():
+                child.destroy()
+
+            ids = parse_library_ids([variable.get()])
+            names = self.library_name_maps.get(selection_key, {})
+            selected_names = [names.get(library_id, "").strip() for library_id in ids]
+            selected_names = [name for name in selected_names if name]
+
+            if not ids:
+                tk.Label(
+                    chip_frame,
+                    text="请选择媒体库",
+                    background=CARD,
+                    foreground="#777777",
+                    bd=0,
+                    padx=2,
+                    pady=1,
+                ).pack(side="left")
+                return
+
+            if not selected_names:
+                selected_names = [f"已选择 {len(ids)} 个"]
+
+            max_visible = 6
+            for name in selected_names[:max_visible]:
+                tk.Label(
+                    chip_frame,
+                    text=name,
+                    background="#ececf0",
+                    foreground="#333333",
+                    bd=0,
+                    padx=7,
+                    pady=2,
+                ).pack(side="left", padx=(0, 5))
+
+            hidden = len(selected_names) - max_visible
+            if hidden > 0:
+                tk.Label(
+                    chip_frame,
+                    text=f"+{hidden}",
+                    background="#ececf0",
+                    foreground="#555555",
+                    bd=0,
+                    padx=7,
+                    pady=2,
+                ).pack(side="left")
+
+        def toggle_dropdown(_event: Any = None) -> str:
+            if self.busy or self.normalize_scope(scope_var.get()) != "selected":
+                return "break"
+            self.toggle_library_dropdown(
+                selector_shell,
+                selection_key,
+                variable,
+                display_var,
+                scope_var,
+            )
+            return "break"
+
+        selector_shell.bind("<Button-1>", toggle_dropdown)
+        selector_shell.content.bind("<Button-1>", toggle_dropdown)
+        chip_frame.bind("<Button-1>", toggle_dropdown)
+        dropdown_button.configure(command=toggle_dropdown)
+        self.action_buttons.append(dropdown_button)
+
+        def sync_scope_selector(*_args: Any) -> None:
+            selected = self.normalize_scope(scope_var.get()) == "selected"
+            dropdown_button.configure(state="normal" if selected and not self.busy else "disabled")
+            if not selected:
+                self.close_library_dropdown()
+
+        variable.trace_add("write", render_chips)
+        display_var.trace_add("write", render_chips)
+        scope_var.trace_add("write", sync_scope_selector)
+        self.scope_sync_callbacks.append(sync_scope_selector)
+        render_chips()
+        sync_scope_selector()
         return frame
 
-    def make_tree(self, parent: ttk.Frame, columns: list[tuple[str, str, int]]) -> ttk.Treeview:
-        wrap = ttk.Frame(parent)
+    def library_selection_text(self, selection_key: str, value: str) -> str:
+        ids = parse_library_ids([value])
+        if not ids:
+            return "尚未选择"
+        names = self.library_name_maps.get(selection_key, {})
+        resolved = [names.get(library_id, "").strip() for library_id in ids]
+        if all(resolved):
+            return "、".join(resolved)
+        visible = [name for name in resolved if name]
+        missing = len(ids) - len(visible)
+        if visible:
+            return "、".join(visible) + f"（另 {missing} 个名称待刷新）"
+        return f"已保存 {len(ids)} 个媒体库（点击下拉框加载名称）"
+
+    def library_display_name(self, selection_key: str, library_id: str) -> str:
+        name = self.library_name_maps.get(selection_key, {}).get(str(library_id), "").strip()
+        if name:
+            return name
+        ids = parse_library_ids([
+            {
+                "delete_actor_images": self.actor_lib_var.get(),
+                "scan_missing_actors": self.missing_lib_var.get(),
+                "people_quality": self.people_lib_var.get(),
+                "delete_directors": self.director_lib_var.get(),
+            }.get(selection_key, "")
+        ])
+        try:
+            return f"媒体库 {ids.index(str(library_id)) + 1}"
+        except ValueError:
+            return "媒体库"
+
+    def refresh_library_names(self, libraries: list[dict[str, str]]) -> None:
+        available = {
+            str(item.get("Id") or ""): str(item.get("Name") or "")
+            for item in libraries
+            if str(item.get("Id") or "").strip()
+        }
+        bindings = (
+            ("delete_actor_images", self.actor_lib_var, self.actor_lib_name_var),
+            ("scan_missing_actors", self.missing_lib_var, self.missing_lib_name_var),
+            ("people_quality", self.people_lib_var, self.people_lib_name_var),
+            ("delete_directors", self.director_lib_var, self.director_lib_name_var),
+        )
+        for selection_key, variable, display_var in bindings:
+            name_map = self.library_name_maps.setdefault(selection_key, {})
+            for library_id in parse_library_ids([variable.get()]):
+                if available.get(library_id):
+                    name_map[library_id] = available[library_id]
+            display_var.set(self.library_selection_text(selection_key, variable.get()))
+
+    def on_root_configure(self, event: tk.Event) -> None:
+        if event.widget is self.root and self.library_dropdown_popup is not None:
+            self.close_library_dropdown()
+
+    def close_library_dropdown(self) -> None:
+        popup = self.library_dropdown_popup
+        self.library_dropdown_popup = None
+        bind_id = self.library_dropdown_root_click_bind
+        self.library_dropdown_root_click_bind = None
+        if bind_id:
+            try:
+                self.root.unbind("<Button-1>", bind_id)
+            except Exception:
+                pass
+        if popup is None:
+            return
+        try:
+            popup.destroy()
+        except Exception:
+            pass
+
+    def toggle_library_dropdown(
+        self,
+        anchor: tk.Frame,
+        selection_key: str,
+        variable: tk.StringVar,
+        display_var: tk.StringVar,
+        scope_var: tk.StringVar,
+    ) -> None:
+        if self.library_dropdown_popup is not None:
+            self.close_library_dropdown()
+            return
+
+        try:
+            libraries = self.client().list_libraries()
+        except Exception as exc:
+            self.job_error(exc)
+            return
+
+        if not libraries:
+            messagebox.showwarning(APP_TITLE, "Emby 没有返回可选择的媒体库。")
+            return
+
+        self.refresh_library_names(libraries)
+        current_ids = set(parse_library_ids([variable.get()]))
+
+        popup = tk.Toplevel(self.root)
+        self.library_dropdown_popup = popup
+        popup.withdraw()
+        popup.overrideredirect(True)
+        popup.transient(self.root)
+
+        shell = tk.Frame(
+            popup,
+            background=CARD,
+            highlightbackground="#d9dde3",
+            highlightthickness=1,
+            bd=0,
+        )
+        shell.pack(fill="both", expand=True)
+
+        body = tk.Frame(shell, background=CARD)
+        body.pack(fill="both", expand=True, padx=10, pady=(9, 6))
+
+        flags: dict[str, tk.BooleanVar] = {}
+
+        def draw_checkbox(canvas: tk.Canvas, checked: bool) -> None:
+            canvas.delete("all")
+            if checked:
+                canvas.create_rectangle(
+                    2, 2, 16, 16,
+                    outline="#2563eb",
+                    fill="#2563eb",
+                    width=1,
+                )
+                canvas.create_line(
+                    5, 9, 8, 12, 13, 6,
+                    fill="#ffffff",
+                    width=2,
+                    capstyle="round",
+                    joinstyle="round",
+                )
+            else:
+                canvas.create_rectangle(
+                    2, 2, 16, 16,
+                    outline="#b8bec7",
+                    fill="#ffffff",
+                    width=1,
+                )
+
+        for item in libraries:
+            library_id = str(item["Id"])
+            library_name = str(item["Name"])
+            self.library_name_maps.setdefault(selection_key, {})[library_id] = library_name
+            flag = tk.BooleanVar(value=library_id in current_ids)
+            flags[library_id] = flag
+
+            row = tk.Frame(body, background=CARD, bd=0, highlightthickness=0)
+            row.pack(fill="x", pady=1)
+
+            box = tk.Canvas(
+                row,
+                width=18,
+                height=18,
+                background=CARD,
+                highlightthickness=0,
+                bd=0,
+            )
+            box.pack(side="left", padx=(2, 8), pady=4)
+
+            label = tk.Label(
+                row,
+                text=library_name,
+                background=CARD,
+                foreground="#222222",
+                anchor="w",
+                bd=0,
+                padx=0,
+                pady=0,
+            )
+            label.pack(side="left", fill="x", expand=True, pady=4)
+
+            def refresh_box(
+                *_args: Any,
+                current_box: tk.Canvas = box,
+                current_flag: tk.BooleanVar = flag,
+            ) -> None:
+                draw_checkbox(current_box, bool(current_flag.get()))
+
+            flag.trace_add("write", refresh_box)
+            refresh_box()
+
+            def set_hover(
+                active: bool,
+                current_row: tk.Frame = row,
+                current_box: tk.Canvas = box,
+                current_label: tk.Label = label,
+            ) -> None:
+                bg = "#f7f8fa" if active else "#ffffff"
+                current_row.configure(background=bg)
+                current_box.configure(background=bg)
+                current_label.configure(background=bg)
+
+            def toggle_item(
+                _event: Any = None,
+                current_flag: tk.BooleanVar = flag,
+            ) -> str:
+                current_flag.set(not current_flag.get())
+                self.apply_library_checkbox_selection(
+                    libraries,
+                    flags,
+                    selection_key,
+                    variable,
+                    display_var,
+                    scope_var,
+                )
+                return "break"
+
+            for widget in (row, box, label):
+                widget.bind("<Button-1>", toggle_item)
+                widget.bind("<Enter>", lambda _e, r=row, b=box, l=label: set_hover(True, r, b, l))
+                widget.bind("<Leave>", lambda _e, r=row, b=box, l=label: set_hover(False, r, b, l))
+
+        tk.Frame(shell, background="#e5e7eb", height=1, bd=0).pack(fill="x", padx=10, pady=(2, 0))
+
+        footer = tk.Frame(shell, background=CARD, bd=0)
+        footer.pack(fill="x", padx=10, pady=8)
+
+        def flat_button(parent: tk.Widget, text: str, command: Callable[[], None]) -> RoundedButton:
+            return RoundedButton(
+                parent,
+                text=text,
+                command=command,
+                variant="secondary",
+                height=30,
+                radius=8,
+                background=CARD,
+                foreground=TEXT,
+                activebackground="#F3F6FA",
+                bordercolor=BORDER,
+                padx=12,
+            )
+
+        flat_button(
+            footer,
+            "全选",
+            lambda: self.set_all_library_checkboxes(
+                True,
+                libraries,
+                flags,
+                selection_key,
+                variable,
+                display_var,
+                scope_var,
+            ),
+        ).pack(side="left")
+
+        flat_button(
+            footer,
+            "清空",
+            lambda: self.set_all_library_checkboxes(
+                False,
+                libraries,
+                flags,
+                selection_key,
+                variable,
+                display_var,
+                scope_var,
+            ),
+        ).pack(side="left", padx=(7, 0))
+
+        flat_button(
+            footer,
+            "完成",
+            self.close_library_dropdown,
+        ).pack(side="right")
+
+        popup.update_idletasks()
+        width = max(280, min(anchor.winfo_width(), 340))
+        height = popup.winfo_reqheight()
+        x = anchor.winfo_rootx()
+        y = anchor.winfo_rooty() + anchor.winfo_height() + 2
+
+        screen_height = popup.winfo_screenheight()
+        if y + height > screen_height - 40:
+            y = max(0, anchor.winfo_rooty() - height - 2)
+
+        popup.geometry(f"{width}x{height}+{x}+{y}")
+        popup.deiconify()
+        popup.lift()
+        popup.focus_force()
+        popup.bind("<Escape>", lambda _event: self.close_library_dropdown())
+
+        def close_on_root_click(_event: tk.Event) -> None:
+            if self.library_dropdown_popup is popup:
+                self.root.after_idle(self.close_library_dropdown)
+
+        self.library_dropdown_root_click_bind = self.root.bind(
+            "<Button-1>",
+            close_on_root_click,
+            add="+",
+        )
+
+        # Keep Tk variable wrappers alive while the popup is open.
+        popup._library_flags = flags  # type: ignore[attr-defined]
+
+    def set_all_library_checkboxes(
+        self,
+        selected: bool,
+        libraries: list[dict[str, str]],
+        flags: dict[str, tk.BooleanVar],
+        selection_key: str,
+        variable: tk.StringVar,
+        display_var: tk.StringVar,
+        scope_var: tk.StringVar,
+    ) -> None:
+        for flag in flags.values():
+            flag.set(selected)
+        self.apply_library_checkbox_selection(
+            libraries,
+            flags,
+            selection_key,
+            variable,
+            display_var,
+            scope_var,
+        )
+
+    def apply_library_checkbox_selection(
+        self,
+        libraries: list[dict[str, str]],
+        flags: dict[str, tk.BooleanVar],
+        selection_key: str,
+        variable: tk.StringVar,
+        display_var: tk.StringVar,
+        scope_var: tk.StringVar,
+    ) -> None:
+        selected = [
+            item
+            for item in libraries
+            if flags.get(str(item["Id"])) is not None
+            and flags[str(item["Id"])].get()
+        ]
+        variable.set(",".join(str(item["Id"]) for item in selected))
+
+        name_map = self.library_name_maps.setdefault(selection_key, {})
+        for item in libraries:
+            name_map[str(item["Id"])] = str(item["Name"])
+
+        display_var.set(
+            "、".join(str(item["Name"]) for item in selected)
+            if selected
+            else "尚未选择"
+        )
+        scope_var.set("selected")
+        self.save_all_settings(show_message=False)
+
+    def make_tree(self, parent: tk.Widget, columns: list[tuple[str, str, int]]) -> ttk.Treeview:
+        wrap = ttk.Frame(parent, style="Card.TFrame")
         wrap.pack(fill="both", expand=True)
         names = [c[0] for c in columns]
-        tree = ttk.Treeview(wrap, columns=names, show="headings", selectmode="extended")
+        tree = ttk.Treeview(
+            wrap,
+            columns=names,
+            show="headings",
+            selectmode="extended",
+            style="Modern.Treeview",
+        )
         heading_titles = {key: title for key, title, _width in columns}
         tree._heading_titles = heading_titles  # type: ignore[attr-defined]
         tree._sort_state = {}  # type: ignore[attr-defined]
@@ -194,12 +1026,24 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
             lambda event, current_tree=tree: self.open_tree_directory(event, current_tree),
             add="+",
         )
-        y = ttk.Scrollbar(wrap, orient="vertical", command=tree.yview)
-        x = ttk.Scrollbar(wrap, orient="horizontal", command=tree.xview)
+        y = AutoHideScrollbar(
+            wrap,
+            orient="vertical",
+            command=tree.yview,
+            style="Modern.Vertical.TScrollbar",
+        )
+        x = AutoHideScrollbar(
+            wrap,
+            orient="horizontal",
+            command=tree.xview,
+            style="Modern.Horizontal.TScrollbar",
+        )
         tree.configure(yscrollcommand=y.set, xscrollcommand=x.set)
         tree.grid(row=0, column=0, sticky="nsew")
         y.grid(row=0, column=1, sticky="ns")
         x.grid(row=1, column=0, sticky="ew")
+        self.root.after_idle(lambda current=y, current_tree=tree: current.set(*current_tree.yview()))
+        self.root.after_idle(lambda current=x, current_tree=tree: current.set(*current_tree.xview()))
         wrap.rowconfigure(0, weight=1)
         wrap.columnconfigure(0, weight=1)
         return tree
@@ -290,6 +1134,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
             self.missing_rows = []
         elif tree is self.director_tree:
             self.director_rows = []
+        self.refresh_result_counts()
 
     def collect_settings(self) -> dict[str, Any]:
         try:
@@ -310,11 +1155,16 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
             "libraries": {
                 "delete_actor_images": self.actor_lib_var.get().strip(),
                 "scan_missing_actors": self.missing_lib_var.get().strip(),
+                "people_quality": self.people_lib_var.get().strip(),
                 "delete_directors": self.director_lib_var.get().strip(),
+            },
+            "library_names": {
+                key: dict(value) for key, value in self.library_name_maps.items()
             },
             "scopes": {
                 "delete_actor_images": self.normalize_scope(self.actor_scope_var.get()),
                 "scan_missing_actors": self.normalize_scope(self.missing_scope_var.get()),
+                "people_quality": self.normalize_scope(self.people_scope_var.get()),
                 "delete_directors": self.normalize_scope(self.director_scope_var.get()),
             },
             "scan_missing_actors": {"include_video": bool(self.include_video_var.get())},
@@ -352,7 +1202,7 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
     def libraries(self, value: str) -> list[str]:
         ids = parse_library_ids([value])
         if not ids:
-            raise EmbyError("请选择“指定媒体库”后填写至少一个媒体库 ID。")
+            raise EmbyError("请选择“指定媒体库”后至少选择一个媒体库。")
         return ids
 
     def scope_libraries(self, scope: str, value: str) -> list[str | None]:
@@ -362,9 +1212,15 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
 
     def set_busy(self, busy: bool, text: str = "") -> None:
         self.busy = busy
+        self.sidebar_status_var.set("处理中…" if busy else "就绪")
         for btn in self.action_buttons:
             try:
                 btn.configure(state="disabled" if busy else "normal")
+            except Exception:
+                pass
+        for callback in self.scope_sync_callbacks:
+            try:
+                callback()
             except Exception:
                 pass
         if text:
@@ -402,13 +1258,20 @@ class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
             self.job_error(exc)
             return
 
-        def worker() -> dict[str, Any]:
-            return client.get_json("/System/Info")
+        def worker() -> tuple[dict[str, Any], list[dict[str, str]]]:
+            return client.get_json("/System/Info"), client.list_libraries()
 
-        def done(result: dict[str, Any]) -> None:
-            server_name = result.get("ServerName") or result.get("Name") or "Emby Server"
-            version = result.get("Version") or "未知"
-            messagebox.showinfo(APP_TITLE, f"连接成功。\n服务器：{server_name}\n版本：{version}")
+        def done(result: tuple[dict[str, Any], list[dict[str, str]]]) -> None:
+            info, libraries = result
+            self.refresh_library_names(libraries)
+            self.save_all_settings(show_message=False)
+            server_name = info.get("ServerName") or info.get("Name") or "Emby Server"
+            version = info.get("Version") or "未知"
+            self.connection_status_var.set(f"已连接 · {server_name} · v{version}")
+            messagebox.showinfo(
+                APP_TITLE,
+                f"连接成功。\n服务器：{server_name}\n版本：{version}\n媒体库：{len(libraries)} 个",
+            )
 
         self.run_job("正在测试 Emby 连接……", worker, done)
 

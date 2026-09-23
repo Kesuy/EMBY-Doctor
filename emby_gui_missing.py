@@ -9,32 +9,70 @@ from tkinter import messagebox, ttk
 
 from emby_batch import has_actor
 from emby_gui import APP_TITLE, complete_directory_path, export_missing_csv, media_directory
+from emby_gui_theme import RoundedButton
 
 
 class MissingActorsTabMixin:
     def build_missing_tab(self) -> None:
-        controls = self.top_controls(
-            self.missing_tab,
+        toolbar_card = self.make_card(self.missing_tab)
+        toolbar_card.pack(fill="x", pady=(0, 10))
+        toolbar = ttk.Frame(toolbar_card, style="Card.TFrame", padding=(14, 12))
+        toolbar.pack(fill="both", expand=True)
+
+        ttk.Label(toolbar, text="扫描范围", style="Section.TLabel").pack(anchor="w", pady=(0, 8))
+        self.top_controls(
+            toolbar,
+            "scan_missing_actors",
             self.missing_lib_var,
+            self.missing_lib_name_var,
             self.missing_scope_var,
         )
-        ttk.Checkbutton(controls, text="同时扫描普通视频（Video）", variable=self.include_video_var).pack(side="left", padx=3)
-        b_scan = ttk.Button(controls, text="开始扫描", command=self.scan_missing_actors)
-        b_scan.pack(side="left", padx=3)
-        b_csv = ttk.Button(controls, text="导出 CSV", command=self.export_missing)
-        b_csv.pack(side="left", padx=3)
-        b_clear = ttk.Button(controls, text="清空列表", command=lambda: self.clear_tree(self.missing_tree))
-        b_clear.pack(side="left", padx=3)
+
+        actions = ttk.Frame(toolbar, style="Card.TFrame")
+        actions.pack(fill="x", pady=(4, 0))
+        ttk.Checkbutton(
+            actions,
+            text="同时扫描普通视频（Video）",
+            style="Card.TCheckbutton",
+            variable=self.include_video_var,
+        ).pack(side="left")
+        ttk.Label(
+            actions,
+            text="默认仅扫描 Movie；右键结果可复制影片名、刷新元数据或打开目录。",
+            style="Muted.TLabel",
+        ).pack(side="left", padx=(12, 0))
+
+        b_clear = RoundedButton(
+            actions,
+            text="清空列表",
+            variant="ghost",
+            command=lambda: self.clear_tree(self.missing_tree),
+        )
+        b_clear.pack(side="right")
+        b_csv = RoundedButton(actions, text="导出 CSV", variant="secondary", command=self.export_missing)
+        b_csv.pack(side="right", padx=(0, 6))
+        b_scan = RoundedButton(actions, text="开始扫描", variant="primary", command=self.scan_missing_actors)
+        b_scan.pack(side="right", padx=(0, 6))
         self.action_buttons.extend([b_scan, b_csv, b_clear])
 
+        result_card = self.make_card(self.missing_tab)
+        result_card.pack(fill="both", expand=True)
+        result = ttk.Frame(result_card, style="Card.TFrame", padding=(14, 12))
+        result.pack(fill="both", expand=True)
+
+        result_head = ttk.Frame(result, style="Card.TFrame")
+        result_head.pack(fill="x", pady=(0, 8))
+        ttk.Label(result_head, text="无演员影片", style="Section.TLabel").pack(side="left")
+        ttk.Label(result_head, textvariable=self.missing_result_var, style="Muted.TLabel").pack(side="right")
+
         self.missing_tree = self.make_tree(
-            self.missing_tab,
+            result,
             [
-                ("name", "影片", 180),
+                ("name", "影片", 190),
                 ("id", "Item ID", 120),
-                ("library", "扫描范围", 110),
-                ("path", "文件路径", 330),
-                ("directory", "影片所在目录", 330),
+                ("library", "媒体库", 120),
+                ("path", "文件路径", 340),
+                ("directory", "影片所在目录", 340),
             ],
         )
         self.missing_context_iid = ""
@@ -167,7 +205,11 @@ class MissingActorsTabMixin:
         def worker() -> list[dict[str, Any]]:
             missing: list[dict[str, Any]] = []
             for library_id in libraries:
-                scope_label = "全部媒体库" if library_id is None else str(library_id)
+                scope_label = (
+                    "全部媒体库"
+                    if library_id is None
+                    else self.library_display_name("scan_missing_actors", str(library_id))
+                )
                 for movie in client.query_items(
                     library_id,
                     include_item_types=item_types,
@@ -205,6 +247,7 @@ class MissingActorsTabMixin:
                         row["Directory"],
                     ),
                 )
+            self.refresh_result_counts()
             self.status_var.set(f"无演员影片扫描完成：{len(rows)} 部")
 
         self.run_job("正在扫描无演员影片……", worker, done)
