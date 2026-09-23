@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added **重复人物与质检** with duplicate Person comparison, profile completeness scoring, avatar-missing audit, and Provider ID conflict detection.
+- Added safe association migration: move movie People references from the duplicate Person to the selected keep Person without automatically deleting Person entities.
+- Added side-by-side Person details with image preview, Provider IDs, association counts, confidence badges, and reversible keep direction.
+- Added a server-wide Person query plus PNG image retrieval to the Emby client.
 - Renamed the project and application from **Emby Media Library Batch Processor** to **EMBY Doctor**.
 - Renamed Windows EXE / CI artifacts to `EMBY-Doctor` / `EMBY-Doctor-Windows`.
 - Updated GUI, CLI, package metadata, User-Agent, README, CI and Release branding.
