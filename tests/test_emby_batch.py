@@ -8,6 +8,12 @@ from emby_batch import (
     people_of_type,
     remove_directors,
 )
+from emby_people import (
+    build_duplicate_candidates,
+    normalize_person_name,
+    person_completeness,
+    replace_person_reference,
+)
 
 
 class PureFunctionTests(unittest.TestCase):
@@ -90,6 +96,92 @@ class PureFunctionTests(unittest.TestCase):
         self.assertEqual([p["Name"] for p in people_of_type(updated, "Writer")], ["Writer W"])
         self.assertNotIn("UserData", updated)
         self.assertEqual(len(original["People"]), 3)
+
+    def test_query_people_pages_and_requests_profile_fields(self):
+        calls = []
+
+        class RecordingClient(EmbyClient):
+            def get_json(self, path, params=None):
+                calls.append((path, dict(params or {})))
+                start = int((params or {}).get("StartIndex", 0))
+                if start == 0:
+                    return {
+                        "Items": [{"Id": "10", "Name": "A"}, {"Id": "11", "Name": "B"}],
+                        "TotalRecordCount": 3,
+                    }
+                return {
+                    "Items": [{"Id": "12", "Name": "C"}],
+                    "TotalRecordCount": 3,
+                }
+
+        c = RecordingClient("http://localhost:8096", "x")
+        rows = list(c.query_people(page_size=2))
+        self.assertEqual([row["Id"] for row in rows], ["10", "11", "12"])
+        self.assertEqual(calls[0][0], "/Persons")
+        self.assertIn("ProviderIds", calls[0][1]["Fields"])
+        self.assertTrue(calls[0][1]["EnableImages"])
+
+    def test_duplicate_people_detects_same_name_and_prefers_more_complete_profile(self):
+        persons = [
+            {
+                "Id": "1",
+                "Name": "横山 みれい",
+                "ProviderIds": {"Tmdb": "100"},
+                "PrimaryImageTag": "img",
+                "Overview": "bio",
+            },
+            {
+                "Id": "2",
+                "Name": "横山みれい",
+                "ProviderIds": {"MetaTube": "abc"},
+            },
+        ]
+        candidates = build_duplicate_candidates(persons, {"1": 8, "2": 1})
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["Confidence"], 90)
+        self.assertEqual(candidates[0]["Left"]["Id"], "1")
+        self.assertEqual(candidates[0]["Right"]["Id"], "2")
+        self.assertGreater(
+            person_completeness(candidates[0]["Left"], 8),
+            person_completeness(candidates[0]["Right"], 1),
+        )
+        self.assertEqual(normalize_person_name("横山 みれい"), normalize_person_name("横山みれい"))
+
+    def test_duplicate_people_shared_provider_id_has_highest_confidence(self):
+        persons = [
+            {"Id": "1", "Name": "Alice A", "ProviderIds": {"Tmdb": "123"}},
+            {"Id": "2", "Name": "Alice B", "ProviderIds": {"Tmdb": "123"}},
+        ]
+        candidates = build_duplicate_candidates(persons)
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["Confidence"], 100)
+        self.assertEqual(candidates[0]["Reason"], "Provider ID 一致")
+
+    def test_replace_person_reference_preserves_roles_and_deduplicates(self):
+        original = {
+            "Name": "Movie",
+            "People": [
+                {"Id": "2", "Name": "重复人物", "Type": "Actor", "Role": "A"},
+                {"Id": "1", "Name": "保留人物", "Type": "Actor", "Role": "A"},
+                {"Id": "2", "Name": "重复人物", "Type": "Actor", "Role": "B"},
+                {"Id": "9", "Name": "导演", "Type": "Director", "Role": ""},
+            ],
+            "UserData": {"Played": True},
+        }
+        updated, replaced = replace_person_reference(
+            original,
+            {"Id": "2", "Name": "重复人物"},
+            {"Id": "1", "Name": "保留人物"},
+        )
+        self.assertEqual(replaced, 2)
+        actors = people_of_type(updated, "Actor")
+        self.assertEqual(
+            [(p["Id"], p["Name"], p["Role"]) for p in actors],
+            [("1", "保留人物", "A"), ("1", "保留人物", "B")],
+        )
+        self.assertEqual(len(people_of_type(updated, "Director")), 1)
+        self.assertNotIn("UserData", updated)
+        self.assertEqual(original["People"][0]["Id"], "2")
 
 
 class GuiConfigurationTests(unittest.TestCase):
