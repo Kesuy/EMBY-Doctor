@@ -28,6 +28,8 @@ from emby_gui_theme import (
 )
 from emby_people import (
     build_duplicate_candidates,
+    find_person_identity_anomalies,
+    identity_name_matches,
     person_completeness,
     person_provider_ids,
     replace_person_reference,
@@ -40,6 +42,8 @@ class PeopleQualityTabMixin:
         self.person_catalog: dict[str, dict[str, Any]] = {}
         self.person_associations: dict[str, list[dict[str, Any]]] = {}
         self.people_candidate_by_iid: dict[str, dict[str, Any]] = {}
+        self.people_conflict_issue_by_iid: dict[str, dict[str, Any]] = {}
+        self.person_identity_anomalies: list[dict[str, Any]] = []
         self.people_selected_candidate: dict[str, Any] | None = None
         self.people_photo_refs: dict[str, tk.PhotoImage] = {}
         self.people_image_generation = 0
@@ -580,15 +584,27 @@ class PeopleQualityTabMixin:
             pady=5,
         ).pack(side="right")
 
+        self.split_mapping_button = RoundedButton(
+            head,
+            text="拆分错误映射",
+            variant="secondary",
+            command=self.split_selected_identity_anomaly,
+        )
+        self.split_mapping_button.pack(side="right", padx=(0, 8))
+        self.split_mapping_button.configure(state="disabled")
+        self.action_buttons.append(self.split_mapping_button)
+
         self.conflict_tree = self.make_tree(
             inner,
             [
-                ("pair", "人物候选", 340),
-                ("providers", "冲突 Provider", 260),
-                ("confidence", "置信度", 100),
+                ("kind", "类型", 110),
+                ("pair", "人物 / 候选", 280),
+                ("providers", "冲突 / 身份线索", 390),
+                ("confidence", "级别", 100),
                 ("reason", "识别依据", 180),
             ],
         )
+        self.conflict_tree.bind("<<TreeviewSelect>>", self.on_people_conflict_select)
 
     def scan_people_audit(self, target: str = "duplicate") -> None:
         try:
@@ -603,7 +619,12 @@ class PeopleQualityTabMixin:
             "conflict": "正在扫描人物资料冲突……",
         }
 
-        def worker() -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
+        def worker() -> tuple[
+            list[dict[str, Any]],
+            dict[str, list[dict[str, Any]]],
+            list[dict[str, Any]],
+            list[dict[str, Any]],
+        ]:
             library_ids = self.scope_libraries(
                 self.people_scope_var.get(),
                 self.people_lib_var.get(),
@@ -642,16 +663,26 @@ class PeopleQualityTabMixin:
             persons = list(person_map.values())
             counts = {person_id: len(items) for person_id, items in associations.items()}
             candidates = build_duplicate_candidates(persons, counts)
-            return persons, associations, candidates
+            anomalies = find_person_identity_anomalies(persons)
+            anomaly_by_id = {str(item.get("Id") or ""): item for item in anomalies}
+            for candidate in candidates:
+                risky = []
+                for side in ("Left", "Right"):
+                    person_id = str(candidate[side].get("Id") or "")
+                    if person_id in anomaly_by_id:
+                        risky.append(anomaly_by_id[person_id])
+                candidate["IdentityRisks"] = risky
+            return persons, associations, candidates, anomalies
 
         def done(
             result: tuple[
                 list[dict[str, Any]],
                 dict[str, list[dict[str, Any]]],
                 list[dict[str, Any]],
+                list[dict[str, Any]],
             ]
         ) -> None:
-            persons, associations, candidates = result
+            persons, associations, candidates, anomalies = result
             self.person_catalog = {
                 str(person.get("Id") or ""): person
                 for person in persons
@@ -659,6 +690,7 @@ class PeopleQualityTabMixin:
             }
             self.person_associations = associations
             self.person_candidates = candidates
+            self.person_identity_anomalies = anomalies
             self.populate_people_audit_views()
             self.show_people_subpage(target)
             self.status_var.set(
@@ -728,6 +760,7 @@ class PeopleQualityTabMixin:
             1
             for candidate in visible_candidates
             if not candidate.get("Conflicts")
+            and not candidate.get("IdentityRisks")
             and self.person_associations.get(str(candidate["Right"].get("Id") or ""))
         )
         self.bulk_merge_button.configure(
@@ -765,22 +798,56 @@ class PeopleQualityTabMixin:
 
         for item in self.conflict_tree.get_children():
             self.conflict_tree.delete(item)
-        conflicts = [candidate for candidate in self.person_candidates if candidate.get("Conflicts")]
-        for index, candidate in enumerate(conflicts):
+        self.people_conflict_issue_by_iid.clear()
+
+        pair_conflicts = [
+            candidate for candidate in self.person_candidates if candidate.get("Conflicts")
+        ]
+        for index, candidate in enumerate(pair_conflicts):
             left = candidate["Left"]
             right = candidate["Right"]
+            iid = f"conflict-pair-{index}"
             self.conflict_tree.insert(
                 "",
                 "end",
-                iid=f"conflict-{index}",
+                iid=iid,
                 values=(
+                    "候选冲突",
                     f"{left.get('Name') or '未知'}  ↔  {right.get('Name') or '未知'}",
                     "、".join(candidate.get("Conflicts") or []),
-                    f"{candidate['Confidence']}分",
+                    "阻止批量合并",
                     candidate.get("Reason") or "",
                 ),
             )
-        self.conflict_count_var.set(f"冲突 {len(conflicts)} 组")
+            self.people_conflict_issue_by_iid[iid] = {
+                "Kind": "pair",
+                "Candidate": candidate,
+            }
+
+        for index, anomaly in enumerate(self.person_identity_anomalies):
+            iid = f"conflict-person-{index}"
+            person_id = str(anomaly.get("Id") or "")
+            assoc_count = len(self.person_associations.get(person_id, []))
+            self.conflict_tree.insert(
+                "",
+                "end",
+                iid=iid,
+                values=(
+                    "身份异常",
+                    f"{anomaly.get('Name') or '未知'} [{person_id}]",
+                    anomaly.get("Summary") or "",
+                    f"{anomaly.get('Risk') or '中'}风险",
+                    f"Provider 内嵌姓名不一致 · 关联 {assoc_count} 部",
+                ),
+            )
+            self.people_conflict_issue_by_iid[iid] = {
+                "Kind": "identity",
+                "Anomaly": anomaly,
+            }
+
+        total_conflicts = len(pair_conflicts) + len(self.person_identity_anomalies)
+        self.conflict_count_var.set(f"冲突 {total_conflicts} 项")
+        self.split_mapping_button.configure(state="disabled", text="拆分错误映射")
 
         visible_rows = self.duplicate_tree.get_children()
         if visible_rows:
@@ -791,6 +858,296 @@ class PeopleQualityTabMixin:
         else:
             self.people_selected_candidate = None
             self.render_empty_duplicate_detail()
+
+
+    def on_people_conflict_select(self, _event: tk.Event | None = None) -> None:
+        selected = self.conflict_tree.selection()
+        if not selected:
+            self.split_mapping_button.configure(state="disabled", text="拆分错误映射")
+            return
+        issue = self.people_conflict_issue_by_iid.get(selected[0])
+        if not issue or issue.get("Kind") != "identity":
+            self.split_mapping_button.configure(state="disabled", text="拆分错误映射")
+            return
+        anomaly = issue.get("Anomaly") or {}
+        person_id = str(anomaly.get("Id") or "")
+        count = len(self.person_associations.get(person_id, []))
+        self.split_mapping_button.configure(
+            state="normal" if count else "disabled",
+            text=f"拆分错误映射（{count}）" if count else "无关联可拆分",
+        )
+
+    def split_selected_identity_anomaly(self) -> None:
+        selected = self.conflict_tree.selection()
+        if not selected:
+            messagebox.showwarning(APP_TITLE, "请先选择一条“身份异常”。")
+            return
+        issue = self.people_conflict_issue_by_iid.get(selected[0])
+        if not issue or issue.get("Kind") != "identity":
+            messagebox.showwarning(APP_TITLE, "当前选择不是可拆分的 Person 身份异常。")
+            return
+
+        anomaly = issue.get("Anomaly") or {}
+        source_person = dict(anomaly.get("Person") or {})
+        source_id = str(source_person.get("Id") or "")
+        associations = list(self.person_associations.get(source_id, []))
+        if not associations:
+            messagebox.showinfo(APP_TITLE, "该 Person 在当前扫描范围内没有可拆分的影片关联。")
+            return
+
+        hint_names = [
+            str(hint.get("Identity") or "").strip()
+            for hint in (anomaly.get("MismatchedHints") or [])
+            if str(hint.get("Identity") or "").strip()
+        ]
+        targets: list[dict[str, Any]] = []
+        for person_id, person in self.person_catalog.items():
+            if person_id == source_id:
+                continue
+            name = str(person.get("Name") or "")
+            if any(identity_name_matches(name, hint) for hint in hint_names):
+                targets.append(person)
+        targets.sort(key=lambda person: str(person.get("Name") or "").casefold())
+
+        if not targets:
+            messagebox.showinfo(
+                APP_TITLE,
+                "已识别出身份异常，但当前扫描范围内没有找到与 Provider 姓名线索匹配的目标 Person。\n\n"
+                "请把上方范围切到“全部媒体库”后重新扫描，再执行拆分。",
+            )
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("拆分错误映射")
+        dialog.geometry("980x620")
+        dialog.minsize(820, 520)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.configure(background=BG)
+
+        outer = tk.Frame(dialog, background=BG, bd=0)
+        outer.pack(fill="both", expand=True, padx=14, pady=14)
+
+        header = self.make_card(outer)
+        header.pack(fill="x", pady=(0, 10))
+        header_inner = tk.Frame(header, background=CARD, bd=0)
+        header_inner.pack(fill="x", padx=14, pady=12)
+        tk.Label(
+            header_inner,
+            text=f"异常 Person：{source_person.get('Name') or '未知'} [{source_id}]",
+            background=CARD,
+            foreground=DANGER,
+            font=("Microsoft YaHei UI", 11, "bold"),
+            anchor="w",
+        ).pack(fill="x")
+        tk.Label(
+            header_inner,
+            text=f"Provider 身份线索：{anomaly.get('Summary') or '—'}",
+            background=CARD,
+            foreground=MUTED,
+            font=("Microsoft YaHei UI", 9),
+            anchor="w",
+            justify="left",
+        ).pack(fill="x", pady=(4, 0))
+
+        target_card = self.make_card(outer)
+        target_card.pack(fill="x", pady=(0, 10))
+        target_inner = tk.Frame(target_card, background=CARD, bd=0)
+        target_inner.pack(fill="x", padx=14, pady=10)
+        tk.Label(
+            target_inner,
+            text="迁移到正确 Person",
+            background=CARD,
+            foreground=TEXT,
+            font=("Microsoft YaHei UI", 9, "bold"),
+        ).pack(side="left", padx=(0, 8))
+
+        target_map: dict[str, dict[str, Any]] = {}
+        values: list[str] = []
+        for person in targets:
+            display = f"{person.get('Name') or '未知'} [{person.get('Id') or ''}]"
+            values.append(display)
+            target_map[display] = person
+        target_var = tk.StringVar(value=values[0] if values else "")
+        target_box = ttk.Combobox(
+            target_inner,
+            textvariable=target_var,
+            values=values,
+            state="readonly",
+            width=48,
+        )
+        target_box.pack(side="left", fill="x", expand=True)
+        tk.Label(
+            target_inner,
+            text="只列出与 Provider 姓名线索匹配的现有 Person",
+            background=CARD,
+            foreground=MUTED,
+            font=("Microsoft YaHei UI", 8),
+        ).pack(side="left", padx=(10, 0))
+
+        list_card = self.make_card(outer)
+        list_card.pack(fill="both", expand=True)
+        list_inner = tk.Frame(list_card, background=CARD, bd=0)
+        list_inner.pack(fill="both", expand=True, padx=10, pady=10)
+        tk.Label(
+            list_inner,
+            text="勾选要从异常 Person 迁走的影片（可 Ctrl / Shift 多选）",
+            background=CARD,
+            foreground=TEXT,
+            font=("Microsoft YaHei UI", 9, "bold"),
+            anchor="w",
+        ).pack(fill="x", pady=(0, 8))
+
+        tree_wrap = tk.Frame(list_inner, background=CARD, bd=0)
+        tree_wrap.pack(fill="both", expand=True)
+        tree = ttk.Treeview(
+            tree_wrap,
+            columns=("name", "id", "path"),
+            show="headings",
+            selectmode="extended",
+            style="Modern.Treeview",
+        )
+        tree.heading("name", text="影片")
+        tree.heading("id", text="Item ID")
+        tree.heading("path", text="路径")
+        tree.column("name", width=320, minwidth=180)
+        tree.column("id", width=130, minwidth=100)
+        tree.column("path", width=430, minwidth=220)
+        assoc_by_iid: dict[str, dict[str, Any]] = {}
+        for index, movie in enumerate(associations):
+            iid = f"split-{index}"
+            tree.insert(
+                "",
+                "end",
+                iid=iid,
+                values=(
+                    movie.get("Name") or movie.get("Id") or "",
+                    movie.get("Id") or "",
+                    movie.get("Path") or "",
+                ),
+            )
+            assoc_by_iid[iid] = movie
+        y = AutoHideScrollbar(
+            tree_wrap,
+            orient="vertical",
+            command=tree.yview,
+            style="Modern.Vertical.TScrollbar",
+        )
+        x = AutoHideScrollbar(
+            tree_wrap,
+            orient="horizontal",
+            command=tree.xview,
+            style="Modern.Horizontal.TScrollbar",
+        )
+        tree.configure(yscrollcommand=y.set, xscrollcommand=x.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        y.grid(row=0, column=1, sticky="ns")
+        x.grid(row=1, column=0, sticky="ew")
+        tree_wrap.grid_rowconfigure(0, weight=1)
+        tree_wrap.grid_columnconfigure(0, weight=1)
+
+        footer = tk.Frame(outer, background=BG, bd=0)
+        footer.pack(fill="x", pady=(10, 0))
+
+        def select_all() -> None:
+            tree.selection_set(tree.get_children())
+
+        RoundedButton(
+            footer,
+            text="全选",
+            variant="secondary",
+            command=select_all,
+        ).pack(side="left")
+        RoundedButton(
+            footer,
+            text="取消选择",
+            variant="ghost",
+            command=lambda: tree.selection_remove(tree.selection()),
+        ).pack(side="left", padx=(8, 0))
+
+        def execute_split() -> None:
+            target_person = target_map.get(target_var.get())
+            selected_rows = list(tree.selection())
+            if not target_person:
+                messagebox.showwarning(APP_TITLE, "请选择正确的目标 Person。", parent=dialog)
+                return
+            if not selected_rows:
+                messagebox.showwarning(APP_TITLE, "请至少选择一部要迁移的影片。", parent=dialog)
+                return
+
+            selected_movies = [assoc_by_iid[iid] for iid in selected_rows if iid in assoc_by_iid]
+            if not messagebox.askyesno(
+                APP_TITLE,
+                f"确认迁移所选 {len(selected_movies)} 部影片？\n\n"
+                f"来源：{source_person.get('Name') or source_id} [{source_id}]\n"
+                f"目标：{target_person.get('Name') or ''} [{target_person.get('Id') or ''}]\n\n"
+                "只修改所选影片的 People 关联，不删除 Person，也不改其它影片。",
+                icon="warning",
+                parent=dialog,
+            ):
+                return
+
+            synthetic = {
+                "Left": dict(target_person),
+                "Right": dict(source_person),
+                "Confidence": 0,
+                "Reason": "人工拆分错误映射",
+                "Conflicts": [],
+            }
+            dialog.destroy()
+            try:
+                client = self.client()
+            except Exception as exc:
+                self.job_error(exc)
+                return
+
+            def worker() -> dict[str, Any]:
+                user_id, _ = client.get_admin_user_id()
+                return self._migrate_candidate_core(
+                    client,
+                    user_id,
+                    synthetic,
+                    associations_override=selected_movies,
+                )
+
+            def done(result: dict[str, Any]) -> None:
+                self._apply_migration_result(result)
+                self.populate_people_audit_views()
+                success = int(result.get("success") or 0)
+                failed = list(result.get("failed") or [])
+                self.status_var.set(
+                    f"错误映射拆分完成：迁移 {success} 部，失败 {len(failed)} 部。"
+                )
+                if failed:
+                    detail = "\n".join(
+                        f"{item.get('Name') or item.get('Id')}: {item.get('Error')}"
+                        for item in failed[:8]
+                    )
+                    messagebox.showwarning(
+                        APP_TITLE,
+                        f"拆分完成，但有部分影片失败：\n\n{detail}\n\n请重新扫描确认。",
+                    )
+                else:
+                    messagebox.showinfo(
+                        APP_TITLE,
+                        f"已迁移 {success} 部影片到“{target_person.get('Name') or ''}”。\n\n"
+                        "异常 Person 实体及其 ProviderIds 未被修改；建议继续拆分剩余影片，最后重新扫描确认。",
+                    )
+
+            self.run_job("正在拆分错误人物映射……", worker, done)
+
+        RoundedButton(
+            footer,
+            text="迁移所选关联",
+            variant="primary",
+            command=execute_split,
+        ).pack(side="right")
+        RoundedButton(
+            footer,
+            text="关闭",
+            variant="secondary",
+            command=dialog.destroy,
+        ).pack(side="right", padx=(0, 8))
 
     def on_duplicate_select(self, _event: tk.Event | None = None) -> None:
         selected = self.duplicate_tree.selection()
@@ -853,7 +1210,20 @@ class PeopleQualityTabMixin:
         conflict_text = ""
         if candidate.get("Conflicts"):
             conflict_text = f"；Provider 冲突：{'、'.join(candidate['Conflicts'])}"
-        if right_assoc > 0:
+        if candidate.get("IdentityRisks"):
+            risky_names = "、".join(
+                str(item.get("Name") or item.get("Id") or "")
+                for item in candidate.get("IdentityRisks") or []
+            )
+            self.migrate_button.configure(
+                state="disabled",
+                text="存在身份异常",
+            )
+            self.people_migration_hint_var.set(
+                f"检测到 Person 身份异常：{risky_names}。为防止错误批量迁移，普通合并已禁用。\n"
+                "请切换到“资料冲突”，选择对应身份异常后使用“拆分错误映射”。"
+            )
+        elif right_assoc > 0:
             self.migrate_button.configure(
                 state="normal",
                 text="合并此组（迁移关联）",
@@ -973,12 +1343,25 @@ class PeopleQualityTabMixin:
         client,
         user_id: str,
         candidate: dict[str, Any],
+        associations_override: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        if candidate.get("IdentityRisks"):
+            messagebox.showwarning(
+                APP_TITLE,
+                "这组候选包含 Person 身份异常，普通合并已被安全阻止。\n\n"
+                "请到“资料冲突”页面使用“拆分错误映射”人工选择影片和目标 Person。",
+            )
+            return
+
         keep_person = dict(candidate["Left"])
         duplicate_person = dict(candidate["Right"])
         keep_id = str(keep_person.get("Id") or "")
         duplicate_id = str(duplicate_person.get("Id") or "")
-        associations = list(self.person_associations.get(duplicate_id, []))
+        associations = list(
+            associations_override
+            if associations_override is not None
+            else self.person_associations.get(duplicate_id, [])
+        )
         success = 0
         failed: list[dict[str, str]] = []
         updated_movies: list[dict[str, Any]] = []
@@ -1041,16 +1424,19 @@ class PeopleQualityTabMixin:
                 keep_bucket.append(movie)
                 known.add(movie_id)
 
-        failed_ids = {str(item.get("Id") or "") for item in failed}
+        updated_ids = {
+            str(item.get("Id") or "") for item in updated_movies if str(item.get("Id") or "")
+        }
+        current_source = list(self.person_associations.get(duplicate_id, []))
         remaining = [
             movie
-            for movie in associations
-            if str(movie.get("Id") or "") in failed_ids
+            for movie in current_source
+            if str(movie.get("Id") or "") not in updated_ids
         ]
         self.person_associations[duplicate_id] = remaining
 
-        # A fully migrated candidate should disappear from the current result
-        # immediately. A fresh scan is still the source of truth from Emby.
+        # A fully migrated duplicate candidate should disappear immediately.
+        # For manual split operations the synthetic candidate is not in this list.
         if not remaining and not failed:
             candidate = result.get("candidate")
             self.person_candidates = [
@@ -1139,6 +1525,9 @@ class PeopleQualityTabMixin:
             return
 
         conflict_candidates = [candidate for candidate in candidates if candidate.get("Conflicts")]
+        identity_risk_candidates = [
+            candidate for candidate in candidates if candidate.get("IdentityRisks")
+        ]
         no_assoc_candidates = [
             candidate
             for candidate in candidates
@@ -1148,6 +1537,7 @@ class PeopleQualityTabMixin:
             candidate
             for candidate in candidates
             if not candidate.get("Conflicts")
+            and not candidate.get("IdentityRisks")
             and self.person_associations.get(str(candidate["Right"].get("Id") or ""))
         ]
 
@@ -1155,7 +1545,7 @@ class PeopleQualityTabMixin:
             messagebox.showinfo(
                 APP_TITLE,
                 "当前筛选结果没有可安全批量合并的候选。\n\n"
-                "Provider ID 冲突会自动跳过；右侧没有关联影片的候选也会跳过。",
+                "Provider ID 冲突、Person 身份异常和右侧没有关联影片的候选都会自动跳过。",
             )
             return
 
@@ -1169,6 +1559,7 @@ class PeopleQualityTabMixin:
             f"当前候选：{len(candidates)} 组\n"
             f"可批量合并：{len(eligible)} 组 / {movie_count} 个影片关联\n"
             f"Provider 冲突跳过：{len(conflict_candidates)} 组\n"
+            f"身份异常跳过：{len(identity_risk_candidates)} 组\n"
             f"无可迁移关联跳过：{len(no_assoc_candidates)} 组\n\n"
             "批量操作只迁移 People 关联，不自动删除 Person 实体。",
             icon="warning",
@@ -1214,6 +1605,7 @@ class PeopleQualityTabMixin:
                 f"更新影片：{updated_movies}\n"
                 f"失败影片：{failed_movies}\n"
                 f"Provider 冲突跳过：{len(conflict_candidates)}\n"
+                f"身份异常跳过：{len(identity_risk_candidates)}\n"
                 f"无关联跳过：{len(no_assoc_candidates)}\n\n"
                 "Person 实体没有被自动删除，建议完成后重新扫描。"
             )
