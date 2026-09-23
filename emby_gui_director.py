@@ -7,6 +7,7 @@ from tkinter import messagebox, ttk
 
 from emby_batch import people_of_type, remove_directors
 from emby_gui import APP_TITLE, export_director_csv, media_directory, save_director_backup
+from emby_gui_theme import RoundedButton
 
 
 class DirectorTabMixin:
@@ -33,18 +34,18 @@ class DirectorTabMixin:
             style="Muted.TLabel",
         ).pack(side="left", fill="x", expand=True)
 
-        b_clear = ttk.Button(
+        b_clear = RoundedButton(
             actions,
             text="清空列表",
-            style="Ghost.TButton",
+            variant="ghost",
             command=lambda: self.clear_tree(self.director_tree),
         )
         b_clear.pack(side="right")
-        b_csv = ttk.Button(actions, text="导出 CSV", style="Secondary.TButton", command=self.export_directors)
+        b_csv = RoundedButton(actions, text="导出 CSV", variant="secondary", command=self.export_directors)
         b_csv.pack(side="right", padx=(0, 6))
-        b_exec = ttk.Button(actions, text="执行删除", style="Danger.TButton", command=self.execute_directors)
+        b_exec = RoundedButton(actions, text="执行删除", variant="danger", command=self.execute_directors)
         b_exec.pack(side="right", padx=(0, 6))
-        b_scan = ttk.Button(actions, text="扫描预览", style="Primary.TButton", command=self.scan_directors)
+        b_scan = RoundedButton(actions, text="扫描预览", variant="primary", command=self.scan_directors)
         b_scan.pack(side="right", padx=(0, 6))
         self.action_buttons.extend([b_scan, b_exec, b_csv, b_clear])
 
