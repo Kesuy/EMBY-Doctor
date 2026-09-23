@@ -106,6 +106,7 @@ def provider_identity_hints(person: dict[str, Any]) -> list[dict[str, str]]:
             filename = urllib.parse.unquote(path.rsplit("/", 1)[-1])
             if "." in filename:
                 filename = filename.rsplit(".", 1)[0]
+            filename = re.sub(r"^AI-Fix[-_]", "", filename, flags=re.IGNORECASE)
             add(provider, filename, value)
 
     return hints
