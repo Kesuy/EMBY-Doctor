@@ -11,8 +11,10 @@ from emby_batch import (
 )
 from emby_people import (
     build_duplicate_candidates,
+    find_person_identity_anomalies,
     normalize_person_name,
     person_completeness,
+    provider_identity_hints,
     replace_person_reference,
 )
 
@@ -164,6 +166,39 @@ class PureFunctionTests(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["Confidence"], 100)
         self.assertEqual(candidates[0]["Reason"], "Provider ID 一致")
+
+
+    def test_provider_identity_hints_detect_embedded_actor_names(self):
+        person = {
+            "Id": "63332",
+            "Name": "葉月奈穂",
+            "ProviderIds": {
+                "javscraper-actress-json": '{"Provider":"JavScraper.Xslist","Name":"Tomoe Nakamura - 中村知恵"}',
+                "MetaTube": "Gfriends:%E8%A5%BF%E5%B1%B1%E3%81%82%E3%81%95%E3%81%B2",
+                "minnano-av": "actress528044.html?%E8%A5%BF%E5%B1%B1%E3%81%82%E3%81%95%E3%81%B2",
+            },
+        }
+        hints = provider_identity_hints(person)
+        identities = {hint["Identity"] for hint in hints}
+        self.assertIn("中村知恵", identities)
+        self.assertIn("西山あさひ", identities)
+
+        anomalies = find_person_identity_anomalies([person])
+        self.assertEqual(len(anomalies), 1)
+        self.assertEqual(anomalies[0]["Risk"], "高")
+        self.assertIn("中村知恵", anomalies[0]["Summary"])
+        self.assertIn("西山あさひ", anomalies[0]["Summary"])
+
+    def test_identity_hint_matching_alias_in_display_name_is_not_flagged(self):
+        person = {
+            "Id": "52027",
+            "Name": "葉月奈穂（葉月菜穂）",
+            "ProviderIds": {
+                "javscraper-actress-json": '{"Provider":"JavScraper.Xslist","Name":"Naho Hatzuki - 葉月奈穂"}',
+                "javscraper-actress": "https://raw.githubusercontent.com/example/AI-Fix-%E8%91%89%E6%9C%88%E5%A5%88%E7%A9%82.jpg",
+            },
+        }
+        self.assertEqual(find_person_identity_anomalies([person]), [])
 
     def test_replace_person_reference_preserves_roles_and_deduplicates(self):
         original = {
