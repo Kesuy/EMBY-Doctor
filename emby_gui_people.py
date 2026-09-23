@@ -791,7 +791,7 @@ class PeopleQualityTabMixin:
                 try:
                     encoded = base64.b64encode(raw).decode("ascii")
                     image = tk.PhotoImage(data=encoded)
-                    label.configure(image=image, text="", width=120, height=160)
+                    label.configure(image=image, text="")
                     self.people_photo_refs[f"{side}:{person_id}:{generation}"] = image
                 except Exception:
                     self._set_person_image_placeholder(label)
@@ -864,10 +864,10 @@ class PeopleQualityTabMixin:
             self.job_error(exc)
             return
 
-        def worker() -> tuple[int, list[str], list[dict[str, Any]]]:
+        def worker() -> tuple[int, list[dict[str, str]], list[dict[str, Any]]]:
             user_id, _ = client.get_admin_user_id()
             success = 0
-            failed: list[str] = []
+            failed: list[dict[str, str]] = []
             updated_movies: list[dict[str, Any]] = []
             for movie in associations:
                 movie_id = str(movie.get("Id") or "")
@@ -887,10 +887,18 @@ class PeopleQualityTabMixin:
                     success += 1
                     updated_movies.append(movie)
                 except Exception as exc:
-                    failed.append(f"{movie.get('Name') or movie_id}: {exc}")
+                    failed.append(
+                        {
+                            "Id": movie_id,
+                            "Name": str(movie.get("Name") or movie_id),
+                            "Error": str(exc),
+                        }
+                    )
             return success, failed, updated_movies
 
-        def done(result: tuple[int, list[str], list[dict[str, Any]]]) -> None:
+        def done(
+            result: tuple[int, list[dict[str, str]], list[dict[str, Any]]]
+        ) -> None:
             success, failed, updated_movies = result
             keep_bucket = self.person_associations.setdefault(keep_id, [])
             known = {str(item.get("Id") or "") for item in keep_bucket}
@@ -900,21 +908,21 @@ class PeopleQualityTabMixin:
                     keep_bucket.append(movie)
                     known.add(movie_id)
 
-            failed_ids = {
-                line.split(":", 1)[0]
-                for line in failed
-            }
+            failed_ids = {str(item.get("Id") or "") for item in failed}
             self.person_associations[duplicate_id] = [
                 movie
                 for movie in associations
-                if str(movie.get("Name") or movie.get("Id") or "") in failed_ids
+                if str(movie.get("Id") or "") in failed_ids
             ]
             self.render_duplicate_candidate(candidate)
             self.status_var.set(
                 f"迁移完成：更新 {success} 个 Movie，失败 {len(failed)}；Person 实体未自动删除。"
             )
             if failed:
-                detail = "\n".join(failed[:8])
+                detail = "\n".join(
+                    f"{item.get('Name') or item.get('Id')}: {item.get('Error')}"
+                    for item in failed[:8]
+                )
                 if len(failed) > 8:
                     detail += f"\n……另有 {len(failed) - 8} 项失败"
                 messagebox.showwarning(
