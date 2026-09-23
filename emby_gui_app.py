@@ -48,9 +48,15 @@ def tree_sort_key(value: Any) -> tuple[int, Any]:
 from emby_gui_actor import ActorTabMixin
 from emby_gui_director import DirectorTabMixin
 from emby_gui_missing import MissingActorsTabMixin
+from emby_gui_people import PeopleQualityTabMixin
 
 
-class EmbyBatchApp(ActorTabMixin, MissingActorsTabMixin, DirectorTabMixin):
+class EmbyBatchApp(
+    ActorTabMixin,
+    MissingActorsTabMixin,
+    DirectorTabMixin,
+    PeopleQualityTabMixin,
+):
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title(f"{APP_TITLE}  v{__version__}")
