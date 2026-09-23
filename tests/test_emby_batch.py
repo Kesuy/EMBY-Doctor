@@ -276,6 +276,31 @@ class GuiConfigurationTests(unittest.TestCase):
             self.assertTrue(hasattr(app, "people_lib_var"))
             self.assertTrue(hasattr(app, "people_scope_var"))
             self.assertTrue(hasattr(app, "people_exact_name_only_var"))
+            self.assertTrue(hasattr(app, "people_score_100_only_var"))
+            self.assertTrue(hasattr(app, "people_provider_match_only_var"))
+            self.assertTrue(hasattr(app, "bulk_merge_button"))
+
+            app.person_candidates = [
+                {
+                    "Left": {"Id": "1", "Name": "同名"},
+                    "Right": {"Id": "2", "Name": "同名"},
+                    "Confidence": 100,
+                    "Reason": "Provider ID 一致",
+                    "Conflicts": [],
+                },
+                {
+                    "Left": {"Id": "3", "Name": "A"},
+                    "Right": {"Id": "4", "Name": "B"},
+                    "Confidence": 90,
+                    "Reason": "姓名完全一致",
+                    "Conflicts": [],
+                },
+            ]
+            app.people_exact_name_only_var.set(True)
+            self.assertEqual(len(app.visible_people_candidates()), 1)
+            app.people_score_100_only_var.set(True)
+            app.people_provider_match_only_var.set(True)
+            self.assertEqual(len(app.visible_people_candidates()), 1)
         finally:
             root.destroy()
 
