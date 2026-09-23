@@ -1,3 +1,4 @@
+import sys
 import unittest
 
 from emby_batch import (
@@ -244,6 +245,24 @@ class GuiConfigurationTests(unittest.TestCase):
         from emby_gui import main
 
         self.assertEqual(main(["--version"]), 0)
+
+    @unittest.skipUnless(sys.platform == "win32", "Tk window construction smoke test is Windows-only")
+    def test_gui_constructs_with_people_quality_page(self):
+        import tkinter as tk
+
+        from emby_gui_app import EmbyBatchApp
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            app = EmbyBatchApp(root)
+            self.assertIn("people", app.page_frames)
+            self.assertIn("people", app.nav_buttons)
+            self.assertTrue(hasattr(app, "duplicate_tree"))
+            self.assertTrue(hasattr(app, "avatar_tree"))
+            self.assertTrue(hasattr(app, "conflict_tree"))
+        finally:
+            root.destroy()
 
 
 if __name__ == "__main__":
