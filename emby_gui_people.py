@@ -1345,14 +1345,6 @@ class PeopleQualityTabMixin:
         candidate: dict[str, Any],
         associations_override: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        if candidate.get("IdentityRisks"):
-            messagebox.showwarning(
-                APP_TITLE,
-                "这组候选包含 Person 身份异常，普通合并已被安全阻止。\n\n"
-                "请到“资料冲突”页面使用“拆分错误映射”人工选择影片和目标 Person。",
-            )
-            return
-
         keep_person = dict(candidate["Left"])
         duplicate_person = dict(candidate["Right"])
         keep_id = str(keep_person.get("Id") or "")
@@ -1447,6 +1439,14 @@ class PeopleQualityTabMixin:
         candidate = self.people_selected_candidate
         if not candidate:
             messagebox.showwarning(APP_TITLE, "请先选择一组重复人物。")
+            return
+        if candidate.get("IdentityRisks"):
+            messagebox.showwarning(
+                APP_TITLE,
+                "这组候选包含 Person 身份异常，普通合并已被安全阻止。\n\n"
+                "请到“资料冲突”页面选择对应异常，再使用“拆分错误映射”人工迁移影片。",
+            )
+            self.show_people_subpage("conflict")
             return
 
         keep_person = dict(candidate["Left"])
