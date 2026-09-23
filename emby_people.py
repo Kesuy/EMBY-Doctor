@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import copy
+import json
 import re
 import unicodedata
+import urllib.parse
 from typing import Any
 
 
@@ -24,6 +26,152 @@ def person_provider_ids(person: dict[str, Any]) -> dict[str, str]:
         if provider and provider_id:
             result[provider] = provider_id
     return result
+
+
+
+def _identity_name_candidates(value: Any) -> list[str]:
+    """Extract a stable display identity from provider-supplied actor names."""
+    text = unicodedata.normalize("NFKC", str(value or "")).strip()
+    if not text:
+        return []
+    parts = [part.strip() for part in re.split(r"\s+-\s+", text) if part.strip()]
+    if len(parts) > 1:
+        cjk_parts = [
+            part
+            for part in parts
+            if re.search(r"[\u3040-\u30ff\u3400-\u9fff]", part)
+        ]
+        return [cjk_parts[-1] if cjk_parts else parts[-1]]
+    return [text]
+
+
+def identity_name_matches(left: Any, right: Any) -> bool:
+    """Return True when two identity labels are the same or one contains the other."""
+    left_key = normalize_person_name(left)
+    right_key = normalize_person_name(right)
+    if not left_key or not right_key:
+        return False
+    if left_key == right_key:
+        return True
+    if min(len(left_key), len(right_key)) < 3:
+        return False
+    return left_key in right_key or right_key in left_key
+
+
+def provider_identity_hints(person: dict[str, Any]) -> list[dict[str, str]]:
+    """Extract human-readable identity hints embedded by common AV metadata providers.
+
+    These hints are deliberately limited to provider values that carry a name
+    directly. Numeric IDs such as TMDB/FANZA are not resolved over the network.
+    """
+    hints: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(source: str, identity: Any, evidence: str) -> None:
+        for candidate in _identity_name_candidates(identity):
+            key = (source.casefold(), normalize_person_name(candidate))
+            if not key[1] or key in seen:
+                continue
+            seen.add(key)
+            hints.append(
+                {
+                    "Source": source,
+                    "Identity": candidate,
+                    "Evidence": evidence,
+                }
+            )
+
+    for provider, raw_value in person_provider_ids(person).items():
+        key = provider.casefold()
+        value = str(raw_value or "").strip()
+        if not value:
+            continue
+
+        if "javscraper-actress-json" in key:
+            try:
+                payload = json.loads(value)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = None
+            if isinstance(payload, dict) and payload.get("Name"):
+                add(provider, payload.get("Name"), value)
+
+        if value.casefold().startswith("gfriends:"):
+            add(provider, urllib.parse.unquote(value.split(":", 1)[1]), value)
+
+        if "minnano" in key and "?" in value:
+            add(provider, urllib.parse.unquote(value.rsplit("?", 1)[1]), value)
+
+        if "javscraper-actress" in key and "raw.githubusercontent.com" in value:
+            path = urllib.parse.urlparse(value).path
+            filename = urllib.parse.unquote(path.rsplit("/", 1)[-1])
+            if "." in filename:
+                filename = filename.rsplit(".", 1)[0]
+            add(provider, filename, value)
+
+    return hints
+
+
+def find_person_identity_anomalies(persons: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Find a single Person whose embedded provider name hints disagree with its name."""
+    anomalies: list[dict[str, Any]] = []
+    for person in persons:
+        person_id = str(person.get("Id") or "").strip()
+        person_name = str(person.get("Name") or "").strip()
+        if not person_id or not person_name:
+            continue
+
+        hints = provider_identity_hints(person)
+        mismatched = [
+            hint
+            for hint in hints
+            if not identity_name_matches(person_name, hint.get("Identity"))
+        ]
+        if not mismatched:
+            continue
+
+        groups: dict[str, dict[str, Any]] = {}
+        for hint in mismatched:
+            identity = str(hint.get("Identity") or "").strip()
+            identity_key = normalize_person_name(identity)
+            if not identity_key:
+                continue
+            group = groups.setdefault(
+                identity_key,
+                {"Identity": identity, "Sources": []},
+            )
+            source = str(hint.get("Source") or "").strip()
+            if source and source not in group["Sources"]:
+                group["Sources"].append(source)
+
+        if not groups:
+            continue
+
+        source_count = sum(len(group["Sources"]) for group in groups.values())
+        risk = "高" if len(groups) >= 2 or source_count >= 2 else "中"
+        summary = " / ".join(
+            f"{group['Identity']}（{'、'.join(group['Sources'])}）"
+            for group in groups.values()
+        )
+        anomalies.append(
+            {
+                "Id": person_id,
+                "Name": person_name,
+                "Person": person,
+                "Hints": hints,
+                "MismatchedHints": mismatched,
+                "Risk": risk,
+                "Summary": summary,
+            }
+        )
+
+    anomalies.sort(
+        key=lambda item: (
+            0 if item["Risk"] == "高" else 1,
+            normalize_person_name(item["Name"]),
+            item["Id"],
+        )
+    )
+    return anomalies
 
 
 def provider_conflicts(left: dict[str, Any], right: dict[str, Any]) -> list[str]:
