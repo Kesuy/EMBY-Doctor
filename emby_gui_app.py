@@ -1030,6 +1030,8 @@ class EmbyBatchApp(
         tree.grid(row=0, column=0, sticky="nsew")
         y.grid(row=0, column=1, sticky="ns")
         x.grid(row=1, column=0, sticky="ew")
+        self.root.after_idle(lambda current=y, current_tree=tree: current.set(*current_tree.yview()))
+        self.root.after_idle(lambda current=x, current_tree=tree: current.set(*current_tree.xview()))
         wrap.rowconfigure(0, weight=1)
         wrap.columnconfigure(0, weight=1)
         return tree
