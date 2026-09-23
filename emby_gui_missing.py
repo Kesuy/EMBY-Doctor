@@ -9,6 +9,7 @@ from tkinter import messagebox, ttk
 
 from emby_batch import has_actor
 from emby_gui import APP_TITLE, complete_directory_path, export_missing_csv, media_directory
+from emby_gui_theme import RoundedButton
 
 
 class MissingActorsTabMixin:
@@ -41,16 +42,16 @@ class MissingActorsTabMixin:
             style="Muted.TLabel",
         ).pack(side="left", padx=(12, 0))
 
-        b_clear = ttk.Button(
+        b_clear = RoundedButton(
             actions,
             text="清空列表",
-            style="Ghost.TButton",
+            variant="ghost",
             command=lambda: self.clear_tree(self.missing_tree),
         )
         b_clear.pack(side="right")
-        b_csv = ttk.Button(actions, text="导出 CSV", style="Secondary.TButton", command=self.export_missing)
+        b_csv = RoundedButton(actions, text="导出 CSV", variant="secondary", command=self.export_missing)
         b_csv.pack(side="right", padx=(0, 6))
-        b_scan = ttk.Button(actions, text="开始扫描", style="Primary.TButton", command=self.scan_missing_actors)
+        b_scan = RoundedButton(actions, text="开始扫描", variant="primary", command=self.scan_missing_actors)
         b_scan.pack(side="right", padx=(0, 6))
         self.action_buttons.extend([b_scan, b_csv, b_clear])
 
