@@ -737,6 +737,7 @@ class PeopleQualityTabMixin:
         )
 
         self.people_image_generation += 1
+        self.people_photo_refs.clear()
         generation = self.people_image_generation
         self._load_person_image(left, self.keep_image_label, "keep", generation)
         self._load_person_image(right, self.dup_image_label, "duplicate", generation)
@@ -884,6 +885,13 @@ class PeopleQualityTabMixin:
                         f"/Items/{urllib.parse.quote(movie_id, safe='')}",
                         payload,
                     )
+                    verified = client.get_full_item(user_id, movie_id)
+                    verified_ids = {
+                        str(person.get("Id") or "").strip()
+                        for person in (verified.get("People") or [])
+                    }
+                    if duplicate_id in verified_ids or keep_id not in verified_ids:
+                        raise RuntimeError("Emby 返回的 People 关联未按目标 Person ID 更新")
                     success += 1
                     updated_movies.append(movie)
                 except Exception as exc:
