@@ -99,16 +99,19 @@ def default_settings() -> dict[str, Any]:
         "libraries": {
             "delete_actor_images": "",
             "scan_missing_actors": "",
+            "people_quality": "",
             "delete_directors": "",
         },
         "library_names": {
             "delete_actor_images": {},
             "scan_missing_actors": {},
+            "people_quality": {},
             "delete_directors": {},
         },
         "scopes": {
             "delete_actor_images": "selected",
             "scan_missing_actors": "selected",
+            "people_quality": "selected",
             "delete_directors": "selected",
         },
         "scan_missing_actors": {
