@@ -42,6 +42,7 @@ jobs:
           name: EmbyMediaLibraryBatchProcessor-Windows
           path: dist/EmbyMediaLibraryBatchProcessor.exe
           if-no-files-found: error
+          retention-days: 1
 
   publish:
     needs: build-windows
